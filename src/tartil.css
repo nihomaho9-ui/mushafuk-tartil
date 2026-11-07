@@ -1,0 +1,217 @@
+.tartil {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 500px at 50% -10%, #f8f1e2 0%, transparent 55%),
+    #efe4d0;
+  color: #24190f;
+  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+}
+
+.tartil * { box-sizing: border-box; }
+
+.tartil button,
+.tartil input,
+.tartil select {
+  font: inherit;
+  color: inherit;
+}
+
+.t-top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, #efe4d0 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #e2d3b6;
+}
+
+.t-brand {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+  min-width: 72px;
+}
+
+.t-brand b {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+}
+
+.t-brand span {
+  font-size: 11px;
+  color: #7a674c;
+}
+
+.t-surah {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  border: 1px solid #d9c7a4;
+  border-radius: 999px;
+  background: #fffaf1;
+  padding: 0 12px;
+}
+
+.t-pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.t-pager button {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid #d9c7a4;
+  background: #fffaf1;
+  cursor: pointer;
+}
+
+.t-pager input {
+  width: 58px;
+  height: 36px;
+  text-align: center;
+  border: 1px solid #d9c7a4;
+  border-radius: 10px;
+  background: #fffaf1;
+  font-variant-numeric: tabular-nums;
+}
+
+.t-page {
+  width: min(760px, calc(100% - 20px));
+  margin: 14px auto 12px;
+  background: #fffaf0;
+  border: 1px solid #c9b48a;
+  outline: 1px solid #e7d7b8;
+  outline-offset: 5px;
+  border-radius: 6px;
+  padding: 22px 18px 28px;
+  touch-action: pan-y;
+}
+
+.t-ayahs {
+  direction: rtl;
+  text-align: right;
+  font-family: Amiri, "Noto Naskh Arabic", "Scheherazade New", serif;
+  font-size: clamp(1.45rem, 4.8vw, 2.05rem);
+  line-height: 2.15;
+  color: #1a140c;
+}
+
+.t-sura {
+  display: block;
+  text-align: center;
+  margin: 8px 0 4px;
+  color: #6e5424;
+  font-size: 0.72em;
+  letter-spacing: 0;
+}
+
+.t-sura i {
+  display: inline-block;
+  padding: 2px 18px;
+  border-top: 1px solid #d7c39a;
+  border-bottom: 1px solid #d7c39a;
+  font-style: normal;
+}
+
+.bism {
+  display: block;
+  text-align: center;
+  color: #3d3224;
+  margin-bottom: 4px;
+}
+
+.w { padding: 0 0.12em; border-radius: 0.35em; transition: color 0.45s ease, background 0.45s ease; }
+.num {
+  display: inline-block;
+  margin-inline: 0.15em;
+  color: #8a6a2e;
+  font-size: 0.62em;
+  line-height: 1;
+  vertical-align: super;
+  transition: color 0.45s ease;
+}
+
+.tartil.mic .w,
+.tartil.mic .num,
+.tartil.mic .bism {
+  color: transparent;
+  background: transparent;
+}
+
+.tartil.mic .w.on,
+.tartil.mic .bism.on { color: #1a140c; }
+.tartil.mic .num.on { color: #8a6a2e; }
+.tartil.mic .w.fresh {
+  background: #f3e2b3;
+  color: #1a140c;
+}
+
+.t-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+  background: #fffaf1;
+  border-top: 1px solid #e2d3b6;
+}
+
+.t-mic {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  border-radius: 999px;
+  border: 0;
+  background: #1c3d32;
+  color: #fffaf0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.tartil.mic .t-mic {
+  box-shadow: 0 0 0 6px #e7d3a4;
+}
+
+.t-mic:disabled { opacity: 0.55; cursor: progress; }
+.t-mic svg { width: 28px; height: 28px; fill: currentColor; }
+
+.t-status { min-width: 0; }
+.t-status b { display: block; font-size: 15px; }
+.t-status span { display: block; color: #6d5c45; font-size: 13px; line-height: 1.35; }
+
+.t-foot {
+  width: min(760px, calc(100% - 20px));
+  margin: 8px auto 120px;
+  color: #8a7760;
+  font-size: 12px;
+  text-align: center;
+}
+.t-foot a { color: #6e5424; }
+
+.t-load {
+  height: 4px;
+  margin-top: 6px;
+  background: #eadcbf;
+  border-radius: 99px;
+  overflow: hidden;
+  display: none;
+}
+.t-load.on { display: block; }
+.t-load i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #1c3d32;
+}

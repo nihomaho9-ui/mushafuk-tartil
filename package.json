@@ -1,0 +1,15 @@
+{
+  "name": "mushafuk-tartil",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 8099",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@tilawa/core": "^0.4.0",
+    "onnxruntime-web": "^1.31.1",
+    "vite": "^8.3.6"
+  }
+}
