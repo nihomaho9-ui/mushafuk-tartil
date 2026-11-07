@@ -119,6 +119,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let takeMisses: Miss[] = [];
   let retryClose = false;
   let audioStop: (() => Promise<void>) | null = null;
+  let settlingMic: Promise<void> = Promise.resolve();
+  let opening = false;
   const shown = new Set<string>();
   const timers = new Map<string, number>();
   let freshKey = "";
@@ -1017,7 +1019,6 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const place = `${name} ${m.a}${m.w >= 0 ? `, söz ${m.w + 1}` : ""}`;
     if (!micOn) {
       await render();
-      micBtn.disabled = true;
       try {
         await startMic();
       } catch (err: unknown) {
@@ -1027,8 +1028,6 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         levelBar.classList.remove("on");
         const message = err instanceof Error ? err.message : "Mikrofon açılmadı";
         setStatus("Alınmadı", message);
-      } finally {
-        micBtn.disabled = false;
       }
       return;
     }
@@ -1050,6 +1049,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
 
   async function startMic(): Promise<void> {
+    if (opening || micOn) return;
+    opening = true;
+    try {
+    await settlingMic;
+    if (micOn) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus("Mikrofon yoxdur", "Bu brauzer səs yazmır. Chrome və ya Huawei brauzerində HTTPS ilə açın.");
       return;
@@ -1095,8 +1099,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
+    if (!micOn) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
     const ctx = new AudioContext();
-    await ctx.resume();
+    void ctx.resume();
     const source = ctx.createMediaStreamSource(stream);
     const proc = ctx.createScriptProcessor(4096, 1, 1);
     const gain = ctx.createGain();
@@ -1125,32 +1133,44 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     gain.connect(ctx.destination);
     audioStop = async () => {
       proc.onaudioprocess = null;
-      proc.disconnect();
-      source.disconnect();
-      gain.disconnect();
-      stream.getTracks().forEach((t) => t.stop());
-      await ctx.close();
-      const phase = engine.zipformer?.correction?.state?.phase;
-      if (phase && phase !== "idle") engine.zipformer?.correct("review_later");
       try {
-        const flushed = await engine.stop();
-        if (Array.isArray(flushed)) {
-          for (const msg of flushed) {
-            if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
-          }
-        }
+        proc.disconnect();
+        source.disconnect();
+        gain.disconnect();
+      } catch {
+        /* already stopped */
+      }
+      stream.getTracks().forEach((t) => t.stop());
+      void ctx.close();
+      try {
+        await Promise.race([
+          (async () => {
+            await chain.catch(() => undefined);
+            const phase = engine.zipformer?.correction?.state?.phase;
+            if (phase && phase !== "idle") engine.zipformer?.correct("review_later");
+            const flushed = await engine.stop();
+            if (Array.isArray(flushed)) {
+              for (const msg of flushed) {
+                if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
+              }
+            }
+            engine.reset();
+          })(),
+          new Promise((resolve) => window.setTimeout(resolve, 1200)),
+        ]);
       } catch {
         /* flush is best-effort */
       }
-      engine.reset();
     };
+    } finally {
+      opening = false;
+    }
   }
 
   async function stopMic(): Promise<void> {
-    const stop = audioStop;
-    audioStop = null;
-    if (stop) await stop();
+    if (!micOn && !audioStop) return;
     micOn = false;
+    micBtn.disabled = false;
     root.classList.remove("mic", "retry");
     micBtn.setAttribute("aria-pressed", "false");
     levelBar.classList.remove("on");
@@ -1166,26 +1186,32 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     lockDirty = false;
     rearm = false;
     const nHeard = heard;
-    const found = takeMisses;
+    const found = takeMisses.slice();
     heard = 0;
     takeMisses = [];
     setProgress(null);
-    if (nHeard || found.length) showSummary(fixed, nHeard, found);
-    else setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
     void wake?.release();
     wake = null;
+    if (nHeard || found.length) showSummary(fixed, nHeard, found);
+    else setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
     render();
+    const stop = audioStop;
+    audioStop = null;
+    if (!stop) return;
+    settlingMic = Promise.race([
+      stop().then(() => undefined).catch(() => undefined),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 1500)),
+    ]);
+    await settlingMic;
   }
 
   micBtn.addEventListener("click", () => {
-    if (loadingModel) return;
-    if (micOn) {
+    if (micOn || audioStop) {
       void stopMic();
       return;
     }
-    micBtn.disabled = true;
-    void startMic()
-      .catch((err: unknown) => {
+    if (loadingModel) return;
+    void startMic().catch((err: unknown) => {
         micOn = false;
         retryKey = "";
         root.classList.remove("mic", "retry");
