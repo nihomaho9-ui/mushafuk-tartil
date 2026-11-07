@@ -35,10 +35,10 @@ type FeedSession = {
     setStructural: (opts: { ayahOrder?: boolean; similarVerse?: boolean; timing?: "stop" | "pause" }) => Promise<void>;
     setSlipHead: (mode: false | "strict" | "high") => void;
     correct: (action: "review_later" | "retry" | "continue") => unknown;
-    correction: { state: { phase?: string } };
+    correction: { state: { phase?: string }; suppressed?: { delete: (wordIndex: number) => void } };
   } | null;
 };
-type Issue = { surah?: number; ayah?: number; word?: number; kind?: string };
+type Issue = { surah?: number; ayah?: number; word?: number; kind?: string; wordIndex?: number };
 type ProgressMsg = {
   type: string;
   surah?: number;
@@ -142,6 +142,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       <span class="t-today">Bu gün 0 ayə · 0 xəta</span>
       <button type="button" class="t-size" aria-label="Yazı ölçüsü">Aa</button>
       <button type="button" class="t-speed" aria-label="Sürət">orta</button>
+      <button type="button" class="t-sense" aria-label="Həssaslıq">normal</button>
+      <button type="button" class="t-hifz" aria-pressed="false">Hifz</button>
     </div>
     <main class="t-page" dir="rtl"></main>
     <p class="t-foot">Tanıma telefonun özündə işləyir. Model və lüğət NPL-1.2 — yalnız qeyri-kommersiya.</p>
@@ -157,7 +159,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       </div>
     </div>
     <div class="t-miss" hidden>
-      <div class="t-miss-h"><b>Xəta yerləri</b><button type="button" class="t-miss-clear">Təmizlə</button></div>
+      <div class="t-miss-h"><b>Xəta yerləri</b><span><button type="button" class="t-miss-go">Düzəlt</button><button type="button" class="t-miss-clear">Təmizlə</button></span></div>
       <div class="t-miss-list"></div>
     </div>
     <div class="t-sum" hidden>
@@ -200,11 +202,37 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   const missBox = need<HTMLElement>(".t-miss");
   const missList = need<HTMLElement>(".t-miss-list");
   let misses: Miss[] = [];
+  const strikes = new Map<string, number>();
+  const warns = new Set<string>();
+  let sense: "normal" | "sert" = "normal";
+  let hifz = false;
+  let queueOn = false;
+  let quietStop = false;
+  let playGen = 0;
+  let clip: HTMLAudioElement | null = null;
   try {
     const saved = JSON.parse(localStorage.getItem(MISS_KEY) || "[]") as Miss[];
     if (Array.isArray(saved)) misses = saved.filter((m) => m && m.s && m.a);
   } catch {
     misses = [];
+  }
+  try {
+    const raw = JSON.parse(localStorage.getItem("tartil.strikes") || "{}") as Record<string, number>;
+    Object.entries(raw).forEach(([key, n]) => {
+      if (n > 0) strikes.set(key, n);
+    });
+    if (localStorage.getItem("tartil.sense") === "sert") sense = "sert";
+    hifz = localStorage.getItem("tartil.hifz") === "1";
+  } catch {
+    /* ignore */
+  }
+  if (hifz) root.classList.add("hifz");
+  function saveStrikes(): void {
+    try {
+      localStorage.setItem("tartil.strikes", JSON.stringify(Object.fromEntries([...strikes].slice(-300))));
+    } catch {
+      /* ignore quota */
+    }
   }
 
   function saveMisses(): void {
@@ -236,9 +264,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       } else put(`${m.s}:${m.a}:${m.w}`, cls);
     }
     sheet.querySelectorAll<HTMLElement>(".w").forEach((el) => {
-      el.classList.remove("err", "err-miss", "err-vowel", "err-skip", "err-repeat");
-      const cls = mark.get(el.dataset.k || "");
+      el.classList.remove("err", "err-miss", "err-vowel", "err-skip", "err-repeat", "warn");
+      const key = el.dataset.k || "";
+      const cls = mark.get(key);
       if (cls) el.classList.add(cls);
+      else if (warns.has(key)) el.classList.add("warn");
     });
     const total = misses.reduce((n, m) => n + (m.n || 1), 0);
     missBtn.textContent = `Xəta ${total}`;
@@ -260,6 +290,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const times = m.n > 1 ? ` · ${m.n}` : "";
       row.textContent = `${name} ${m.a}${m.w >= 0 ? `, söz ${m.w + 1}` : ""} — ${kind}${times}`;
       row.addEventListener("click", () => {
+        queueOn = false;
         void beginRetry(m);
       });
       missList.appendChild(row);
@@ -284,6 +315,64 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     setStatus("Xəta", `${name} ${a}${w >= 0 ? `, söz ${w + 1}` : ""} — ${KIND_AZ[kind] ?? kind}`);
   }
 
+  function orderedMisses(): Miss[] {
+    return [...misses].sort((a, b) => a.s - b.s || a.a - b.a || a.w - b.w);
+  }
+
+  function forgetSpot(surah: number, ayah: number, word = -1): void {
+    for (const key of [...strikes.keys()]) {
+      const parts = key.split(":");
+      if (Number(parts[0]) !== surah || Number(parts[1]) !== ayah) continue;
+      if (word >= 0 && Number(parts[2]) !== word) continue;
+      strikes.delete(key);
+      warns.delete(`${surah}:${ayah}:${parts[2]}`);
+    }
+    saveStrikes();
+  }
+
+  function advanceQueue(): void {
+    if (!queueOn) return;
+    const next = orderedMisses()[0];
+    if (!next) {
+      queueOn = false;
+      setStatus("Bitdi", "Bütün xətalar düzəldi.");
+      queueMicrotask(() => {
+        if (micOn) void stopMic();
+      });
+      return;
+    }
+    void beginRetry(next);
+  }
+
+  function releaseIssue(issue: Issue): void {
+    const z = session?.zipformer;
+    if (!z) return;
+    z.correct("review_later");
+    if (typeof issue.wordIndex === "number") z.correction.suppressed?.delete(issue.wordIndex);
+  }
+
+  function noteStrike(issue: Issue): boolean {
+    const s = issue.surah ?? 0;
+    const a = issue.ayah ?? 0;
+    const w = issue.word ?? -1;
+    if (!s || !a) return false;
+    const kind = issue.kind || "xəta";
+    const key = `${s}:${a}:${w}:${kind}`;
+    const n = (strikes.get(key) ?? 0) + 1;
+    strikes.set(key, n);
+    saveStrikes();
+    if (w >= 0) warns.add(`${s}:${a}:${w}`);
+    paintMisses();
+    const hard = sense === "sert" || n >= 2;
+    if (!hard) {
+      const name = AZ[s - 1] ?? String(s);
+      setStatus("Diqqət", `${name} ${a}${w >= 0 ? `, söz ${w + 1}` : ""} — bir daha olarsa yazılacaq.`);
+      return false;
+    }
+    warns.delete(`${s}:${a}:${w}`);
+    return true;
+  }
+
   missBtn.addEventListener("click", () => {
     missBox.hidden = !missBox.hidden;
     missBtn.setAttribute("aria-expanded", missBox.hidden ? "false" : "true");
@@ -291,8 +380,20 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   });
   need<HTMLButtonElement>(".t-miss-clear").addEventListener("click", () => {
     misses = [];
+    strikes.clear();
+    warns.clear();
+    saveStrikes();
     saveMisses();
     paintMisses();
+  });
+  need<HTMLButtonElement>(".t-miss-go").addEventListener("click", () => {
+    if (!orderedMisses().length) {
+      setStatus("Xəta yoxdur", "Düzəldiləcək yer qalmayıb.");
+      return;
+    }
+    queueOn = true;
+    missBox.hidden = true;
+    void beginRetry(orderedMisses()[0]);
   });
   need<HTMLButtonElement>(".t-sum-ok").addEventListener("click", () => {
     sumBox.hidden = true;
@@ -370,6 +471,34 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   speedBtn.addEventListener("click", () => applyPace(pace === "orta" ? "tez" : "orta"));
   applyPace(pace);
+  const senseBtn = need<HTMLButtonElement>(".t-sense");
+  const hifzBtn = need<HTMLButtonElement>(".t-hifz");
+  function applySense(name: "normal" | "sert"): void {
+    sense = name;
+    senseBtn.textContent = name === "sert" ? "sərt" : "normal";
+    senseBtn.setAttribute("aria-label", name === "sert" ? "Həssaslıq: sərt" : "Həssaslıq: normal");
+    session?.zipformer?.setSlipHead(name === "sert" ? "high" : "strict");
+    try {
+      localStorage.setItem("tartil.sense", name);
+    } catch {
+      /* ignore quota */
+    }
+  }
+  senseBtn.addEventListener("click", () => applySense(sense === "normal" ? "sert" : "normal"));
+  applySense(sense);
+  function applyHifz(on: boolean): void {
+    hifz = on;
+    root.classList.toggle("hifz", on);
+    hifzBtn.classList.toggle("on", on);
+    hifzBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    try {
+      localStorage.setItem("tartil.hifz", on ? "1" : "0");
+    } catch {
+      /* ignore quota */
+    }
+  }
+  hifzBtn.addEventListener("click", () => applyHifz(!hifz));
+  applyHifz(hifz);
   const dayAyahs = new Set<string>();
   function todayStamp(): string {
     const n = new Date();
@@ -744,10 +873,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
           return;
         }
         misses = misses.filter((m) => !(m.s === surah && m.a === ayah));
+        forgetSpot(surah, ayah);
         saveMisses();
         paintMisses();
         ayahLock = "";
         setStatus("Düzəldi", "Ayə təmizdir. Davam edə bilərsiniz.");
+        if (queueOn) advanceQueue();
       }
     }
     if (/^\d+:\d+:\d+$/.test(key)) {
@@ -758,11 +889,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const bits = key.split(":").map(Number);
       const whole = retryKey.endsWith(":*");
       misses = misses.filter((m) => !(m.s === bits[0] && m.a === bits[1] && (whole || m.w === bits[2])));
+      forgetSpot(bits[0], bits[1], whole ? -1 : bits[2]);
       saveMisses();
       retryKey = "";
-      retryClose = true;
       paintMisses();
       applyShown();
+      if (queueOn) {
+        advanceQueue();
+        return;
+      }
+      retryClose = true;
       queueMicrotask(() => {
         if (micOn) void stopMic();
       });
@@ -805,10 +941,21 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const issue = msg.type === "correction_note" ? msg.issue : msg.state?.issue;
       const phase = msg.state?.phase;
       if (msg.type === "correction_note" && issue) {
-        remember(issue);
+        if (noteStrike(issue)) remember(issue);
         return;
       }
       if (phase === "error" && issue?.surah && issue.ayah) {
+        if (!noteStrike(issue)) {
+          if (!settling) {
+            settling = true;
+            try {
+              releaseIssue(issue);
+            } finally {
+              settling = false;
+            }
+          }
+          return;
+        }
         remember(issue);
         holdAyah(issue.surah, issue.ayah);
         if (!settling) {
@@ -823,6 +970,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       }
       if (phase === "corrected" && issue?.surah && issue.ayah) {
         misses = misses.filter((m) => !(m.s === issue.surah && m.a === issue.ayah && m.w === (issue.word ?? -1)));
+        forgetSpot(issue.surah, issue.ayah, issue.word ?? -1);
         saveMisses();
         paintMisses();
         lockDirty = false;
@@ -917,7 +1065,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     session = created;
     if (created.zipformer) {
       await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "pause" });
-      created.zipformer.setSlipHead("strict");
+      created.zipformer.setSlipHead(sense === "sert" ? "high" : "strict");
       created.zipformer.setMode("correction");
     }
     loadingModel = false;
@@ -1008,7 +1156,38 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   document.addEventListener("visibilitychange", onVisible);
 
+  function stopClip(): void {
+    playGen += 1;
+    if (!clip) return;
+    clip.pause();
+    clip.src = "";
+    clip = null;
+  }
+
+  function playAyah(surah: number, ayah: number): Promise<boolean> {
+    stopClip();
+    const gen = playGen;
+    const file = `${String(surah).padStart(3, "0")}${String(ayah).padStart(3, "0")}.mp3`;
+    const el = new Audio(`https://everyayah.com/data/Alafasy_64kbps/${file}`);
+    clip = el;
+    const name = AZ[surah - 1] ?? String(surah);
+    setStatus("Dinlə", `${name} ${ayah} — sonra təkrar edin.`);
+    return new Promise((resolve) => {
+      const done = (ok: boolean) => resolve(gen === playGen && ok);
+      el.addEventListener("ended", () => done(true), { once: true });
+      el.addEventListener("error", () => done(true), { once: true });
+      void el.play().catch(() => done(true));
+    });
+  }
+
   async function beginRetry(m: Miss): Promise<void> {
+    const keepQueue = queueOn;
+    quietStop = true;
+    if (micOn || audioStop) await stopMic();
+    quietStop = false;
+    queueOn = keepQueue;
+    const ok = await playAyah(m.s, m.a);
+    if (!ok || !alive) return;
     retryKey = m.w >= 0 ? `${m.s}:${m.a}:${m.w}` : `${m.s}:${m.a}:*`;
     missBox.hidden = true;
     missBtn.setAttribute("aria-expanded", "false");
@@ -1168,6 +1347,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
 
   async function stopMic(): Promise<void> {
+    stopClip();
     if (!micOn && !audioStop) return;
     micOn = false;
     micBtn.disabled = false;
@@ -1192,8 +1372,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     setProgress(null);
     void wake?.release();
     wake = null;
-    if (nHeard || found.length) showSummary(fixed, nHeard, found);
-    else setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
+    if (!quietStop) {
+      if (nHeard || found.length) showSummary(fixed, nHeard, found);
+      else setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
+    }
     render();
     const stop = audioStop;
     audioStop = null;

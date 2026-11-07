@@ -90,7 +90,9 @@
   text-align: right;
 }
 .t-size,
-.t-speed {
+.t-speed,
+.t-sense,
+.t-hifz {
   flex: none;
   height: 28px;
   border: 1px solid var(--line);
@@ -101,6 +103,8 @@
   font-weight: 700;
   cursor: pointer;
 }
+.t-hifz.on { background: var(--ink); color: var(--paper); }
+.t-tools { flex-wrap: wrap; }
 
 .t-surah {
   flex: 1;
@@ -239,7 +243,8 @@
   padding: 8px;
 }
 .t-miss-h, .t-sum-h { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 8px; }
-.t-miss-clear, .t-sum-ok { border: 0; background: none; color: #7a3b2e; font-weight: 700; cursor: pointer; }
+.t-miss-clear, .t-miss-go, .t-sum-ok { border: 0; background: none; color: #7a3b2e; font-weight: 700; cursor: pointer; }
+.t-miss-go { margin-inline-end: 10px; }
 .tartil.theme-black .t-miss-clear,
 .tartil.theme-black .t-sum-ok { color: #f0b4a8; }
 .t-miss-row, .t-miss-empty, .t-sum p, .t-sum li {
@@ -272,7 +277,18 @@
   background: transparent;
 }
 
-.tartil.mic .w.num { color: var(--ink); }
+.w.warn { box-shadow: inset 0 -0.08em 0 var(--muted); }
+.tartil.hifz.mic .w,
+.tartil.hifz.mic .w.num,
+.tartil.hifz.mic .w.on,
+.tartil.hifz.mic .w.fresh,
+.tartil.hifz.mic .basmala,
+.tartil.hifz.mic .basmala.on,
+.tartil.hifz.mic .shead {
+  color: transparent;
+  background: transparent;
+}
+.tartil.hifz.mic .w.cue { box-shadow: inset 0 -0.14em 0 var(--ink); }
 
 .tartil.mic .w.on,
 .tartil.mic .basmala.on { color: var(--ink); }
