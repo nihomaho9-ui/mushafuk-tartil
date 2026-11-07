@@ -68,10 +68,38 @@
   letter-spacing: 0.14em;
   font-weight: 700;
 }
-
 .t-brand span {
   font-size: 11px;
   color: var(--muted);
+}
+
+.t-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 6px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.t-today {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+.t-size,
+.t-speed {
+  flex: none;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--chip);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .t-surah {

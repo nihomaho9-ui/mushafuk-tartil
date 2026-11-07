@@ -5,9 +5,9 @@ import qcfPagesData from "./data/qcf-pages.json";
 import qcfWordsData from "./data/qcf-words.json";
 import qcfAyahsData from "./data/qcf-ayahs.json";
 
-const DELAY_MIN = 400;
-const DELAY_STEP = 30;
-const DELAY_CAP = 120;
+let delayMin = 400;
+let delayStep = 30;
+let delayCap = 120;
 const AZ = [
   "Fatihə", "Bəqərə", "Ali İmran", "Nisa", "Maidə", "Ənam", "Əraf", "Ənfal", "Tövbə", "Yunus",
   "Hud", "Yusuf", "Rəd", "İbrahim", "Hicr", "Nəhl", "İsra", "Kəhf", "Məryəm", "Taha",
@@ -136,6 +136,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         <button type="button" data-dir="1" aria-label="Növbəti səhifə">›</button>
       </div>
     </header>
+    <div class="t-tools">
+      <span class="t-today">Bu gün 0 ayə · 0 xəta</span>
+      <button type="button" class="t-size" aria-label="Yazı ölçüsü">Aa</button>
+      <button type="button" class="t-speed" aria-label="Sürət">orta</button>
+    </div>
     <main class="t-page" dir="rtl"></main>
     <p class="t-foot">Tanıma telefonun özündə işləyir. Model və lüğət NPL-1.2 — yalnız qeyri-kommersiya.</p>
     <div class="t-bar">
@@ -235,6 +240,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     });
     const total = misses.reduce((n, m) => n + (m.n || 1), 0);
     missBtn.textContent = `Xəta ${total}`;
+    paintToday();
     missList.replaceChildren();
     if (!misses.length) {
       const empty = document.createElement("p");
@@ -271,6 +277,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     takeMisses.push({ s, a, w, kind, n: 1, t: Date.now() });
     saveMisses();
     paintMisses();
+    navigator.vibrate?.(50);
     const name = AZ[s - 1] ?? String(s);
     setStatus("Xəta", `${name} ${a}${w >= 0 ? `, söz ${w + 1}` : ""} — ${KIND_AZ[kind] ?? kind}`);
   }
@@ -312,6 +319,81 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   themeBtn.addEventListener("click", () => {
     applyTheme(themes[(themes.indexOf(theme) + 1) % themes.length]);
   });
+  const todayEl = need<HTMLElement>(".t-today");
+  const sizeBtn = need<HTMLButtonElement>(".t-size");
+  const speedBtn = need<HTMLButtonElement>(".t-speed");
+  let textScale = 1;
+  try {
+    if (localStorage.getItem("tartil.size") === "boyuk") textScale = 1.28;
+  } catch {
+    /* ignore */
+  }
+  function applySize(big: boolean): void {
+    textScale = big ? 1.28 : 1;
+    sizeBtn.textContent = big ? "A+" : "Aa";
+    sizeBtn.setAttribute("aria-label", big ? "Yazı böyük" : "Yazı kiçik");
+    try {
+      localStorage.setItem("tartil.size", big ? "boyuk" : "kicik");
+    } catch {
+      /* ignore quota */
+    }
+    fit();
+  }
+  sizeBtn.addEventListener("click", () => applySize(textScale === 1));
+  applySize(textScale > 1);
+  let pace: "tez" | "orta" = "orta";
+  try {
+    if (localStorage.getItem("tartil.speed") === "tez") pace = "tez";
+  } catch {
+    /* ignore */
+  }
+  function applyPace(name: "tez" | "orta"): void {
+    pace = name;
+    if (name === "tez") {
+      delayMin = 180;
+      delayStep = 15;
+      delayCap = 40;
+    } else {
+      delayMin = 400;
+      delayStep = 30;
+      delayCap = 120;
+    }
+    speedBtn.textContent = name;
+    speedBtn.setAttribute("aria-label", name === "tez" ? "Sürət: tez" : "Sürət: orta");
+    try {
+      localStorage.setItem("tartil.speed", name);
+    } catch {
+      /* ignore quota */
+    }
+  }
+  speedBtn.addEventListener("click", () => applyPace(pace === "orta" ? "tez" : "orta"));
+  applyPace(pace);
+  const dayAyahs = new Set<string>();
+  function todayStamp(): string {
+    const n = new Date();
+    return `${n.getFullYear()}-${n.getMonth() + 1}-${n.getDate()}`;
+  }
+  try {
+    const raw = JSON.parse(localStorage.getItem("tartil.day") || "") as { d?: string; ayahs?: string[] };
+    if (raw?.d === todayStamp() && Array.isArray(raw.ayahs)) raw.ayahs.forEach((key) => dayAyahs.add(key));
+  } catch {
+    /* ignore */
+  }
+  function paintToday(): void {
+    todayEl.textContent = `Bu gün ${dayAyahs.size} ayə · ${misses.length} xəta`;
+  }
+  function noteAyah(surah: number, ayah: number): void {
+    const key = `${surah}:${ayah}`;
+    if (dayAyahs.has(key)) return;
+    dayAyahs.add(key);
+    try {
+      localStorage.setItem("tartil.day", JSON.stringify({ d: todayStamp(), ayahs: [...dayAyahs] }));
+    } catch {
+      /* ignore quota */
+    }
+    paintToday();
+  }
+  paintToday();
 
   function setStatus(title: string, detail: string): void {
     st.textContent = title;
@@ -374,7 +456,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       size *= (w / widest) * 0.94;
     }
     const phone = matchMedia("(max-width: 520px)").matches;
-    pageEl.style.fontSize = `${size * (phone ? 1 : 0.92)}px`;
+    pageEl.style.fontSize = `${size * (phone ? 1 : 0.92) * textScale}px`;
+    pageEl.style.overflowY = textScale > 1 ? "auto" : "hidden";
     let ink = 0;
     pageEl.querySelectorAll<HTMLElement>(".line:not(.surah):not(.basmala)").forEach((line) => {
       ink = Math.max(ink, textWidth(line));
@@ -640,6 +723,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const total = wordList(surah, ayah).length;
       const idx = Number(parts[2]);
       if (idx === total - 1) {
+        noteAyah(surah, ayah);
         shown.add(`num:${surah}:${ayah}`);
         const prefix = `${surah}:${ayah}:`;
         sheet.querySelectorAll<HTMLElement>(".w").forEach((el) => {
@@ -704,7 +788,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       .sort((a, b) => a - b);
     fresh.forEach((i, n) => {
       const key = `${surah}:${ayah}:${i}`;
-      const delay = DELAY_MIN + Math.min(DELAY_CAP, n * DELAY_STEP);
+      const delay = delayMin + Math.min(delayCap, n * delayStep);
       const id = window.setTimeout(() => reveal(key), delay);
       timers.set(key, id);
     });
@@ -1171,16 +1255,24 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     surahSel.appendChild(opt);
   });
   let start = 1;
+  let fromHash = 0;
   if (hashMode) {
-    const fromHash = Number((location.hash || "").replace("#", ""));
+    fromHash = Number((location.hash || "").replace("#", ""));
     if (fromHash) start = fromHash;
   }
+  let savedPage = 0;
   try {
-    const saved = Number(localStorage.getItem("tartil.page") || "");
-    if (!hashMode && saved) start = saved;
-    if (hashMode && !Number((location.hash || "").replace("#", "")) && saved) start = saved;
+    savedPage = Number(localStorage.getItem("tartil.page") || "");
+    if (!hashMode && savedPage) start = savedPage;
+    if (hashMode && !fromHash && savedPage) start = savedPage;
   } catch {
     /* ignore */
+  }
+  const explicit = hashMode && fromHash > 0 && fromHash !== savedPage;
+  if (!explicit && misses.length) {
+    const first = [...misses].sort((a, b) => a.s - b.s || a.a - b.a || a.w - b.w)[0];
+    const errPage = first ? pageOf.get(`${first.s}:${first.a}`) : 0;
+    if (errPage) start = errPage;
   }
   page = clampPage(start);
   void render();
