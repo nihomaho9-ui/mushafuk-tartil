@@ -1168,15 +1168,42 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     stopClip();
     const gen = playGen;
     const file = `${String(surah).padStart(3, "0")}${String(ayah).padStart(3, "0")}.mp3`;
-    const el = new Audio(`https://everyayah.com/data/Alafasy_64kbps/${file}`);
-    clip = el;
+    const url = `https://verses.quran.com/Alafasy/mp3/${file}`;
     const name = AZ[surah - 1] ?? String(surah);
-    setStatus("Dinlə", `${name} ${ayah} — sonra təkrar edin.`);
+    setStatus("Dinlə", `Mişari əl-Əfasi — ${name} ${ayah}. Sonra təkrar edin.`);
     return new Promise((resolve) => {
-      const done = (ok: boolean) => resolve(gen === playGen && ok);
-      el.addEventListener("ended", () => done(true), { once: true });
-      el.addEventListener("error", () => done(true), { once: true });
-      void el.play().catch(() => done(true));
+      const finish = (ok: boolean) => resolve(gen === playGen && ok);
+      void (async () => {
+        let src = url;
+        try {
+          const cache = "caches" in window ? await caches.open("tartil-audio") : null;
+          let hit = cache ? await cache.match(url) : undefined;
+          if (!hit) {
+            const res = await fetch(url);
+            if (res.ok && cache) {
+              await cache.put(url, res.clone());
+              hit = res;
+            }
+          }
+          if (hit) src = URL.createObjectURL(await hit.blob());
+        } catch {
+          src = url;
+        }
+        if (gen !== playGen) {
+          if (src.startsWith("blob:")) URL.revokeObjectURL(src);
+          finish(false);
+          return;
+        }
+        const el = new Audio(src);
+        clip = el;
+        const done = () => {
+          if (src.startsWith("blob:")) URL.revokeObjectURL(src);
+          finish(true);
+        };
+        el.addEventListener("ended", done, { once: true });
+        el.addEventListener("error", done, { once: true });
+        void el.play().catch(done);
+      })();
     });
   }
 
