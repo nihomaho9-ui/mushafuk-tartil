@@ -1,6 +1,9 @@
 import "./tartil.css";
 import wordsData from "./data/words.json";
 import pagesData from "./data/pages.json";
+import qcfPagesData from "./data/qcf-pages.json";
+import qcfWordsData from "./data/qcf-words.json";
+import qcfAyahsData from "./data/qcf-ayahs.json";
 
 const DELAY_MIN = 1200;
 const DELAY_STEP = 100;
@@ -36,13 +39,36 @@ type ProgressMsg = {
 };
 
 const BASE = import.meta.env.BASE_URL || "/";
+const QCF = "https://mushafuk.online/yazi-fonts/qcf/";
+const BISM = "\uFC41\uFC42\uFC43\uFC44";
+const STARTS =
+  "1:1:2,2:2:3,3:50:3,4:77:2,5:106:8,6:128:3,7:151:3,8:177:3,9:187:2,10:208:2,11:221:9,12:235:11,13:249:3,14:255:5,15:262:3,16:267:9,17:282:3,18:293:12,19:305:3,20:312:7,21:322:3,22:332:2,23:342:2,24:350:2,25:359:13,26:367:2,27:377:2,28:385:10,29:396:10,30:404:12,31:411:3,32:415:2,33:418:2,34:428:3,35:434:10,36:440:6,37:446:2,38:453:2,39:458:6,40:467:5,41:477:3,42:483:3,43:489:7,44:496:3,45:499:2,46:502:9,47:507:2,48:511:3,49:515:9,50:518:3,51:520:14,52:523:10,53:526:2,54:528:12,55:531:7,56:534:9,57:537:13,58:542:3,59:545:9,60:549:2,61:551:9,62:553:3,63:554:9,64:556:2,65:558:2,66:560:3,67:562:3,68:564:8,69:566:12,70:568:11,71:570:7,72:572:3,73:574:3,74:575:10,75:577:8,76:578:12,77:580:9,78:582:3,79:583:10,80:585:2,81:586:4,82:587:3,83:587:14,84:589:5,85:590:4,86:591:3,87:591:12,88:592:7,89:593:5,90:594:8,91:595:4,92:595:13,93:596:8,94:596:15,95:597:5,96:597:11,97:598:6,98:598:11,99:599:8,100:599:14,101:600:6,102:600:13,103:601:3,104:601:7,105:601:13,106:602:3,107:602:8,108:602:14,109:603:3,110:603:8,111:603:13,112:604:3,113:604:7,114:604:12";
+
+type QcfPages = Record<string, string[]>;
+type QcfWords = Record<string, number[][]>;
+type QcfAyahs = Record<string, [string, number][]>;
+const qcfPages = qcfPagesData as QcfPages;
+const qcfWords = qcfWordsData as QcfWords;
+const qcfAyahs = qcfAyahsData as QcfAyahs;
+const heads: Record<number, Record<number, number>> = {};
+const bisLines: Record<number, Record<number, boolean>> = {};
+const stackLines: Record<number, Record<number, boolean>> = {};
+for (const item of STARTS.split(",")) {
+  const [id, pg, line] = item.split(":").map(Number);
+  if (id === 1 || id === 9) (heads[pg] ??= {})[Math.max(0, line - 2)] = id;
+  else if (line >= 3) {
+    (heads[pg] ??= {})[line - 3] = id;
+    (bisLines[pg] ??= {})[line - 2] = true;
+  } else {
+    (heads[pg] ??= {})[0] = id;
+    (stackLines[pg] ??= {})[0] = true;
+  }
+}
+const loadedFonts = new Set<number>();
+let namesReady: Promise<void> | null = null;
 
 function asset(path: string): string {
   return BASE + path.replace(/^\//, "");
-}
-
-function arNum(n: number): string {
-  return String(n).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)] ?? d);
 }
 
 function clampPage(n: number): number {
@@ -77,7 +103,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         <button type="button" data-dir="1" aria-label="Növbəti səhifə">›</button>
       </div>
     </header>
-    <main class="t-page" dir="rtl"><p class="t-ayahs">Quran açılır…</p></main>
+    <main class="t-page" dir="rtl"></main>
     <p class="t-foot">Tanıma telefonun özündə işləyir. Model və lüğət NPL-1.2 — yalnız qeyri-kommersiya.</p>
     <div class="t-bar">
       <button type="button" class="t-mic" aria-pressed="false" aria-label="Mikrofon">
@@ -107,8 +133,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   const surahSel = need<HTMLSelectElement>(".t-surah");
   const pageInput = need<HTMLInputElement>(".t-pageno");
-  const sheet = need<HTMLElement>(".t-ayahs");
   const pageEl = need<HTMLElement>(".t-page");
+  const sheet = pageEl;
   const micBtn = need<HTMLButtonElement>(".t-mic");
   const st = need<HTMLElement>(".t-st");
   const sub = need<HTMLElement>(".t-sub");
@@ -133,6 +159,214 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     return words?.ayahs[surah - 1]?.[ayah - 1] ?? [];
   }
 
+  function loadNames(): Promise<void> {
+    if (!namesReady) {
+      namesReady = Promise.all([
+        new FontFace("surahnames", `url(${asset("sura_names.woff2")})`).load(),
+        new FontFace("QCF1", `url(${QCF}p1.woff2)`).load(),
+      ]).then((faces) => {
+        faces.forEach((face) => document.fonts.add(face));
+        loadedFonts.add(1);
+      });
+    }
+    return namesReady;
+  }
+
+  async function loadPageFont(n: number): Promise<void> {
+    if (loadedFonts.has(n)) return;
+    const face = new FontFace(`QCF${n}`, `url(${QCF}p${n}.woff2)`);
+    await face.load();
+    document.fonts.add(face);
+    loadedFonts.add(n);
+  }
+
+  function textWidth(line: HTMLElement): number {
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    return range.getBoundingClientRect().width;
+  }
+
+  function fit(): void {
+    pageEl.querySelectorAll<HTMLElement>(".line").forEach((line) => line.style.removeProperty("--g"));
+    const h = pageEl.clientHeight;
+    const w = pageEl.clientWidth - 12;
+    if (!h || !w) return;
+    let size = h / 15;
+    for (let i = 0; i < 3; i += 1) {
+      pageEl.style.fontSize = `${size}px`;
+      let widest = 0;
+      pageEl.querySelectorAll<HTMLElement>(".line:not(.surah):not(.basmala)").forEach((line) => {
+        widest = Math.max(widest, line.scrollWidth);
+      });
+      if (widest <= w || widest === 0) break;
+      size *= (w / widest) * 0.94;
+    }
+    const phone = matchMedia("(max-width: 520px)").matches;
+    pageEl.style.fontSize = `${size * (phone ? 1 : 0.92)}px`;
+    let ink = 0;
+    pageEl.querySelectorAll<HTMLElement>(".line:not(.surah):not(.basmala)").forEach((line) => {
+      ink = Math.max(ink, textWidth(line));
+    });
+    const card = Math.min(Math.max(ink, 0), pageEl.clientWidth * 0.94);
+    pageEl.querySelectorAll<HTMLElement>(".shead").forEach((head) => {
+      if (card > 0) head.style.width = `${card}px`;
+    });
+    if (card > 0) {
+      pageEl.querySelectorAll<HTMLElement>(".line:not(.surah):not(.basmala)").forEach((line) => {
+        const ws = line.querySelectorAll<HTMLElement>(".w");
+        if (ws.length < 2) return;
+        const gap0 = parseFloat(getComputedStyle(ws[1]).marginInlineStart) || 0;
+        const nat = textWidth(line) - gap0 * (ws.length - 1);
+        const g = (card - nat) / (ws.length - 1);
+        if (nat >= card * 0.8 && g >= gap0) line.style.setProperty("--g", `${g.toFixed(2)}px`);
+      });
+    }
+    pageEl.querySelectorAll<HTMLElement>(".snames").forEach((row) => {
+      const head = row.parentElement;
+      if (!head) return;
+      row.style.fontSize = `${Math.max(13, head.clientHeight * 0.46)}px`;
+    });
+  }
+
+  function draw(pageNo: number): void {
+    const pageLines = qcfPages[String(pageNo)] ?? [];
+    const wlens = qcfWords[String(pageNo)] ?? [];
+    const runs = qcfAyahs[String(pageNo)] ?? [];
+    const marks: Record<number, number> = { ...(heads[pageNo] ?? {}) };
+    const bis: Record<number, boolean> = { ...(bisLines[pageNo] ?? {}) };
+    const stack: Record<number, boolean> = { ...(stackLines[pageNo] ?? {}) };
+    const prev = qcfPages[String(pageNo - 1)];
+    if (stack[0] && prev && !prev[14]) {
+      delete marks[0];
+      delete stack[0];
+      bis[0] = true;
+    }
+    const nextStack = stackLines[pageNo + 1] ?? {};
+    if (nextStack[0] && !pageLines[14] && marks[14] == null) {
+      const id = heads[pageNo + 1]?.[0];
+      if (id) marks[14] = id;
+    }
+    pageEl.classList.toggle("mid", pageNo === 1 || pageNo === 2);
+    pageEl.style.fontFamily = `QCF${pageNo}, serif`;
+    let ri = 0;
+    let left = runs[0] ? runs[0][1] : 0;
+    const lineKeys = pageLines.map((text) =>
+      [...text].map((ch) => {
+        if (ch !== " ") {
+          while (left === 0 && ri < runs.length - 1) {
+            ri += 1;
+            left = runs[ri]?.[1] ?? 0;
+          }
+          left -= 1;
+        }
+        return runs[ri]?.[0] ?? "";
+      }),
+    );
+    const wordIx = new Map<string, number>();
+    const addBasmala = (parent: HTMLElement, surahId: number) => {
+      const b = document.createElement("span");
+      b.className = "basmala";
+      if (surahId) b.dataset.k = `bism:${surahId}`;
+      b.textContent = BISM;
+      parent.appendChild(b);
+    };
+    const addAyahs = (row: HTMLElement, text: string, i: number) => {
+      let span: HTMLElement | null = null;
+      let word: HTMLElement | null = null;
+      const ks = lineKeys[i] ?? [];
+      const lens = wlens[i] ?? [];
+      let wi = 0;
+      let remain = lens[0] || Infinity;
+      let first = true;
+      [...text].forEach((ch, j) => {
+        const key = ks[j] || "";
+        if (!span || span.dataset.ayah !== key) {
+          span = document.createElement("span");
+          span.className = "ay";
+          span.dataset.ayah = key;
+          row.appendChild(span);
+          word = null;
+        }
+        if (remain === 0) {
+          wi += 1;
+          remain = lens[wi] || Infinity;
+          word = null;
+        }
+        if (!word) {
+          word = document.createElement("span");
+          word.className = first ? "w w0" : "w";
+          first = false;
+          const idx = wordIx.get(key) ?? 0;
+          wordIx.set(key, idx + 1);
+          if (key) word.dataset.k = `${key}:${idx}`;
+          span.appendChild(word);
+        }
+        word.textContent += ch;
+        remain -= 1;
+      });
+    };
+    let last = pageLines.length - 1;
+    if (pageNo === 1 || pageNo === 2) {
+      while (last > 0 && !pageLines[last] && marks[last] == null && !bis[last]) last -= 1;
+    }
+    pageEl.replaceChildren();
+    pageLines.forEach((text, i) => {
+      if (i > last) return;
+      if ((pageNo === 1 || pageNo === 2) && !text && marks[i] == null && !bis[i]) return;
+      const row = document.createElement("div");
+      const surahId = marks[i];
+      row.className = surahId != null ? `line surah${stack[i] ? " stack" : ""}` : bis[i] ? "line basmala" : "line";
+      if (surahId != null) {
+        const head = document.createElement("div");
+        head.className = "shead";
+        const frame = document.createElement("img");
+        frame.src = asset("surah-banner.png");
+        frame.alt = "";
+        const names = document.createElement("span");
+        names.className = "snames";
+        const ornament = document.createElement("span");
+        ornament.className = "sname";
+        ornament.textContent = "\uE000";
+        const name = document.createElement("span");
+        name.className = "sname";
+        name.textContent = String.fromCharCode(0xe000 + Number.parseInt(String(surahId), 16));
+        names.append(ornament, name);
+        head.append(frame, names);
+        row.appendChild(head);
+        if (stack[i]) addBasmala(row, surahId);
+      } else if (bis[i]) addBasmala(row, marks[i - 1] ?? 0);
+      else addAyahs(row, text, i);
+      pageEl.appendChild(row);
+    });
+  }
+
+  let paint = 0;
+  async function render(): Promise<void> {
+    const id = ++paint;
+    const n = page;
+    if (!pageEl.childElementCount) pageEl.textContent = "Quran açılır…";
+    try {
+      await Promise.all([loadNames(), loadPageFont(n)]);
+    } catch {
+      /* draw anyway; the next page load retries */
+    }
+    if (!alive || id !== paint) return;
+    draw(n);
+    fit();
+    if (micOn) applyShown();
+    pageInput.value = String(n);
+    const first = pages[n - 1]?.[0];
+    if (first) surahSel.value = String(first[0]);
+    if (hashMode) history.replaceState(null, "", `#${n}`);
+    try {
+      localStorage.setItem("tartil.page", String(n));
+    } catch {
+      /* ignore quota */
+    }
+    const ahead = n + 1;
+    if (ahead <= 604) void loadPageFont(ahead).catch(() => undefined);
+  }
+
   function clearTimers(): void {
     for (const id of timers.values()) window.clearTimeout(id);
     timers.clear();
@@ -147,63 +381,9 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     });
   }
 
-  function render(): void {
-    if (!words) return;
-    const ayahs = pages[page - 1] ?? [];
-    sheet.replaceChildren();
-    let last = 0;
-    for (const pair of ayahs) {
-      const surah = pair[0] ?? 0;
-      const ayah = pair[1] ?? 0;
-      if (!surah || !ayah) continue;
-      if (surah !== last) {
-        const head = document.createElement("span");
-        head.className = "t-sura";
-        const mark = document.createElement("i");
-        mark.textContent = `سورة ${words.names[surah - 1] ?? ""}`;
-        head.appendChild(mark);
-        sheet.appendChild(head);
-        if (surah !== 1 && surah !== 9 && ayah === 1) {
-          const b = document.createElement("span");
-          b.className = "bism";
-          b.dataset.k = `bism:${surah}`;
-          b.textContent = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ";
-          sheet.appendChild(b);
-        }
-        last = surah;
-      }
-      const list = wordList(surah, ayah);
-      list.forEach((text, i) => {
-        const span = document.createElement("span");
-        span.className = "w";
-        span.dataset.k = `${surah}:${ayah}:${i}`;
-        span.textContent = text;
-        sheet.appendChild(span);
-        sheet.appendChild(document.createTextNode(" "));
-      });
-      const num = document.createElement("span");
-      num.className = "num";
-      num.dataset.k = `num:${surah}:${ayah}`;
-      num.textContent = arNum(ayah);
-      sheet.appendChild(num);
-      sheet.appendChild(document.createTextNode(" "));
-    }
-    if (micOn) applyShown();
-    pageInput.value = String(page);
-    const first = ayahs[0];
-    if (first) surahSel.value = String(first[0]);
-    if (hashMode) history.replaceState(null, "", `#${page}`);
-    try {
-      localStorage.setItem("tartil.page", String(page));
-    } catch {
-      /* ignore quota */
-    }
-  }
-
   function go(n: number): void {
     page = clampPage(n);
-    render();
-    pageEl.scrollIntoView({ block: "start", behavior: "smooth" });
+    void render();
   }
 
   function reveal(key: string): void {
@@ -223,7 +403,14 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       }
       const total = wordList(surah, ayah).length;
       const idx = Number(parts[2]);
-      if (idx === total - 1) shown.add(`num:${surah}:${ayah}`);
+      if (idx === total - 1) {
+        shown.add(`num:${surah}:${ayah}`);
+        const prefix = `${surah}:${ayah}:`;
+        sheet.querySelectorAll<HTMLElement>(".w").forEach((el) => {
+          const k = el.dataset.k || "";
+          if (k.startsWith(prefix) && /^\d+$/.test(k.slice(prefix.length))) shown.add(k);
+        });
+      }
       if (ayah === 1) shown.add(`bism:${surah}`);
     }
     applyShown();
@@ -508,12 +695,15 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     /* ignore */
   }
   page = clampPage(start);
-  render();
+  void render();
   setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, oxuduqca 1–2 saniyə sonra görünür.");
+  const onResize = () => fit();
+  window.addEventListener("resize", onResize);
 
   return () => {
     alive = false;
     window.removeEventListener("keydown", onKey);
+    window.removeEventListener("resize", onResize);
     clearTimers();
     if (micOn) void stopMic();
   };
