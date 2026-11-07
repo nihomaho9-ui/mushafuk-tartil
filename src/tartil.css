@@ -147,7 +147,47 @@
 .sname { font-family: surahnames, serif; line-height: 1; }
 .basmala { font-family: QCF1, serif; line-height: 1; color: #1a1612; }
 
-.w { border-radius: 0.2em; transition: color 0.45s ease, background 0.45s ease; }
+.t-missbtn {
+  border: 1px solid #e2c2b4;
+  background: #fffaf1;
+  color: #7a3b2e;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.t-miss {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: calc(92px + env(safe-area-inset-bottom));
+  z-index: 8;
+  max-height: 46vh;
+  overflow: auto;
+  background: #fffaf0;
+  border: 1px solid #e2d3b6;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(40, 24, 8, 0.16);
+  padding: 8px;
+}
+.t-miss-h { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 8px; }
+.t-miss-clear { border: 0; background: none; color: #7a3b2e; font-weight: 700; cursor: pointer; }
+.t-miss-row, .t-miss-empty {
+  display: block;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  background: transparent;
+  padding: 8px 6px;
+  border-radius: 8px;
+  font: inherit;
+}
+.t-miss-row { cursor: pointer; }
+.t-miss-row:hover { background: #f6ecda; }
+.t-miss-empty { color: #6d5c45; margin: 0; }
+.w.err { box-shadow: inset 0 -0.08em 0 #9c2f24; }
+.tartil.mic .w.err:not(.on) { box-shadow: none; }
 
 .tartil.mic .w,
 .tartil.mic .basmala {

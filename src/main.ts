@@ -5,9 +5,9 @@ import qcfPagesData from "./data/qcf-pages.json";
 import qcfWordsData from "./data/qcf-words.json";
 import qcfAyahsData from "./data/qcf-ayahs.json";
 
-const DELAY_MIN = 1200;
-const DELAY_STEP = 100;
-const DELAY_CAP = 800;
+const DELAY_MIN = 400;
+const DELAY_STEP = 30;
+const DELAY_CAP = 120;
 const AZ = [
   "Fatihə", "Bəqərə", "Ali İmran", "Nisa", "Maidə", "Ənam", "Əraf", "Ənfal", "Tövbə", "Yunus",
   "Hud", "Yusuf", "Rəd", "İbrahim", "Hicr", "Nəhl", "İsra", "Kəhf", "Məryəm", "Taha",
@@ -29,13 +29,31 @@ type FeedSession = {
   feed: (pcm: Float32Array) => Promise<unknown>;
   stop: () => Promise<unknown>;
   reset: () => void;
+  zipformer: {
+    setMode: (mode: "tracking" | "correction") => unknown;
+    setExpected: (passage: { surah: number; ayah: number; ayahEnd?: number } | null) => void;
+    correct: (action: "review_later") => unknown;
+  } | null;
 };
+type Issue = { surah?: number; ayah?: number; word?: number; kind?: string };
 type ProgressMsg = {
   type: string;
   surah?: number;
   ayah?: number;
   word_index?: number;
   matched_indices?: number[];
+  issue?: Issue;
+  state?: { phase?: string; issue?: Issue | null };
+};
+type Miss = { s: number; a: number; w: number; kind: string; n: number; t: number };
+const MISS_KEY = "tartil.misses";
+const KIND_AZ: Record<string, string> = {
+  possible_omission: "söz düşüb",
+  possible_substitution: "söz səhvdir",
+  possible_vowel: "hərəkə",
+  possible_repetition: "təkrar",
+  possible_skipped_ayah: "ayə keçilib",
+  unclear_ayah: "ayə tutulmayıb",
 };
 
 const BASE = import.meta.env.BASE_URL || "/";
@@ -87,6 +105,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let micOn = false;
   let loadingModel = false;
   let session: FeedSession | null = null;
+  let expectedSurah = 0;
   let audioStop: (() => Promise<void>) | null = null;
   const shown = new Set<string>();
   const timers = new Map<string, number>();
@@ -96,6 +115,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   root.innerHTML = `
     <header class="t-top">
       <div class="t-brand"><b>TARTIL</b><span>oxu izləmə</span></div>
+      <button type="button" class="t-missbtn" aria-expanded="false">Xəta 0</button>
       <select class="t-surah" aria-label="Surə"></select>
       <div class="t-pager">
         <button type="button" data-dir="-1" aria-label="Əvvəlki səhifə">‹</button>
@@ -111,9 +131,13 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       </button>
       <div class="t-status">
         <b class="t-st">Oxu</b>
-        <span class="t-sub">Mikrofonu açın: ayələr gizlənir, oxuduqca 1–2 saniyə sonra görünür.</span>
+        <span class="t-sub">Mikrofonu açın: ayələr gizlənir, model təsdiqləyəndə açılır.</span>
         <div class="t-load" aria-hidden="true"><i></i></div>
       </div>
+    </div>
+    <div class="t-miss" hidden>
+      <div class="t-miss-h"><b>Xəta yerləri</b><button type="button" class="t-miss-clear">Təmizlə</button></div>
+      <div class="t-miss-list"></div>
     </div>`;
 
   if (!hashMode) {
@@ -140,6 +164,84 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   const sub = need<HTMLElement>(".t-sub");
   const loadBar = need<HTMLElement>(".t-load");
   const loadFill = need<HTMLElement>(".t-load i");
+  const missBtn = need<HTMLButtonElement>(".t-missbtn");
+  const missBox = need<HTMLElement>(".t-miss");
+  const missList = need<HTMLElement>(".t-miss-list");
+  let misses: Miss[] = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(MISS_KEY) || "[]") as Miss[];
+    if (Array.isArray(saved)) misses = saved.filter((m) => m && m.s && m.a);
+  } catch {
+    misses = [];
+  }
+
+  function saveMisses(): void {
+    try {
+      localStorage.setItem(MISS_KEY, JSON.stringify(misses.slice(-200)));
+    } catch {
+      /* ignore quota */
+    }
+  }
+
+  function paintMisses(): void {
+    const marks = new Set(misses.map((m) => `${m.s}:${m.a}:${m.w}`));
+    sheet.querySelectorAll<HTMLElement>(".w").forEach((el) => {
+      el.classList.toggle("err", marks.has(el.dataset.k || ""));
+    });
+    const total = misses.reduce((n, m) => n + (m.n || 1), 0);
+    missBtn.textContent = `Xəta ${total}`;
+    missList.replaceChildren();
+    if (!misses.length) {
+      const empty = document.createElement("p");
+      empty.className = "t-miss-empty";
+      empty.textContent = "Hələ xəta yoxdur.";
+      missList.appendChild(empty);
+      return;
+    }
+    [...misses].reverse().forEach((m) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "t-miss-row";
+      const name = AZ[m.s - 1] ?? String(m.s);
+      const kind = KIND_AZ[m.kind] ?? "xəta";
+      const times = m.n > 1 ? ` · ${m.n}` : "";
+      row.textContent = `${name} ${m.a}${m.w >= 0 ? `, söz ${m.w + 1}` : ""} — ${kind}${times}`;
+      row.addEventListener("click", () => {
+        const target = pageOf.get(`${m.s}:${m.a}`);
+        missBox.hidden = true;
+        missBtn.setAttribute("aria-expanded", "false");
+        if (target) go(target);
+      });
+      missList.appendChild(row);
+    });
+  }
+
+  function remember(issue: Issue): void {
+    const s = issue.surah ?? 0;
+    const a = issue.ayah ?? 0;
+    const w = issue.word ?? -1;
+    if (!s || !a) return;
+    const kind = issue.kind || "xəta";
+    const prev = misses.find((m) => m.s === s && m.a === a && m.w === w && m.kind === kind);
+    if (prev) prev.n += 1;
+    else misses.push({ s, a, w, kind, n: 1, t: Date.now() });
+    if (misses.length > 200) misses = misses.slice(-200);
+    saveMisses();
+    paintMisses();
+    const name = AZ[s - 1] ?? String(s);
+    setStatus("Xəta", `${name} ${a}${w >= 0 ? `, söz ${w + 1}` : ""} — ${KIND_AZ[kind] ?? kind}`);
+  }
+
+  missBtn.addEventListener("click", () => {
+    missBox.hidden = !missBox.hidden;
+    missBtn.setAttribute("aria-expanded", missBox.hidden ? "false" : "true");
+    if (!missBox.hidden) paintMisses();
+  });
+  need<HTMLButtonElement>(".t-miss-clear").addEventListener("click", () => {
+    misses = [];
+    saveMisses();
+    paintMisses();
+  });
 
   function setStatus(title: string, detail: string): void {
     st.textContent = title;
@@ -354,6 +456,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     draw(n);
     fit();
     if (micOn) applyShown();
+    paintMisses();
     pageInput.value = String(n);
     const first = pages[n - 1]?.[0];
     if (first) surahSel.value = String(first[0]);
@@ -432,11 +535,20 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     });
     if (fresh.length) {
       const name = AZ[surah - 1] ?? String(surah);
-      setStatus("Dinləyirəm", `${name} ${ayah} — sözlər bir-iki saniyə sonra açılacaq`);
+      setStatus("Dinləyirəm", `${name} ${ayah}`);
     }
   }
 
   function onEvent(msg: ProgressMsg): void {
+    if (msg.type === "correction" || msg.type === "correction_note") {
+      const issue = msg.type === "correction_note" ? msg.issue : msg.state?.issue;
+      const flag = msg.type === "correction_note" || msg.state?.phase === "error";
+      if (issue && flag) {
+        remember(issue);
+        if (msg.type === "correction") queueMicrotask(() => session?.zipformer?.correct("review_later"));
+      }
+      return;
+    }
     if (!micOn || msg.type !== "word_progress") return;
     const surah = msg.surah;
     const ayah = msg.ayah;
@@ -445,6 +557,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const idxs = new Set<number>(msg.matched_indices ?? []);
     for (let i = 0; i <= upto; i += 1) idxs.add(i);
     if (!idxs.size) return;
+    if (surah) expectSurah(surah);
     schedule(surah, ayah, [...idxs]);
   }
 
@@ -511,6 +624,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       },
     });
     session = created;
+    created.zipformer?.setMode("correction");
     loadingModel = false;
     setProgress(null);
     return created;
@@ -531,6 +645,13 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     return out;
   }
 
+  function expectSurah(surah: number): void {
+    if (!session?.zipformer || !words || expectedSurah === surah) return;
+    expectedSurah = surah;
+    const total = words.ayahs[surah - 1]?.length ?? 1;
+    session.zipformer.setExpected({ surah, ayah: 1, ayahEnd: total });
+  }
+
   async function startMic(): Promise<void> {
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus("Mikrofon yoxdur", "Bu brauzer səs yazmır. Chrome və ya Huawei brauzerində HTTPS ilə açın.");
@@ -541,11 +662,14 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     shown.clear();
     freshKey = "";
     clearTimers();
+    expectedSurah = 0;
+    const here = pages[page - 1]?.[0]?.[0];
+    if (here) expectSurah(here);
     micOn = true;
     root.classList.add("mic");
     micBtn.setAttribute("aria-pressed", "true");
     applyShown();
-    setStatus("Dinləyirəm", "Ayələr gizləndi. Oxuduqca, bir-iki saniyə gecikmə ilə açılacaq.");
+    setStatus("Dinləyirəm", "Ayələr gizləndi. Təsdiqlənən söz təxminən yarım saniyəyə açılır.");
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
@@ -584,7 +708,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       stream.getTracks().forEach((t) => t.stop());
       await ctx.close();
       try {
-        await engine.stop();
+        const flushed = await engine.stop();
+        if (Array.isArray(flushed)) {
+          for (const msg of flushed) {
+            if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
+          }
+        }
       } catch {
         /* flush is best-effort */
       }
@@ -593,15 +722,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
 
   async function stopMic(): Promise<void> {
+    const stop = audioStop;
+    audioStop = null;
+    if (stop) await stop();
     micOn = false;
     root.classList.remove("mic");
     micBtn.setAttribute("aria-pressed", "false");
     clearTimers();
     shown.clear();
     freshKey = "";
-    const stop = audioStop;
-    audioStop = null;
-    if (stop) await stop();
+    expectedSurah = 0;
     setProgress(null);
     setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
     render();
@@ -696,7 +826,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   page = clampPage(start);
   void render();
-  setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, oxuduqca 1–2 saniyə sonra görünür.");
+  setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, model təsdiqləyəndə açılır.");
   const onResize = () => fit();
   window.addEventListener("resize", onResize);
 
