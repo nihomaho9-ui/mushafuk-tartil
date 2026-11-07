@@ -196,6 +196,8 @@
   background: transparent;
 }
 
+.tartil.mic .w.num { color: #1a1612; }
+
 .tartil.mic .w.on,
 .tartil.mic .basmala.on { color: #1a1612; }
 .tartil.mic .w.fresh { background: #f3e2b3; color: #1a1612; }

@@ -400,7 +400,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
           first = false;
           const idx = wordIx.get(key) ?? 0;
           wordIx.set(key, idx + 1);
-          if (key) word.dataset.k = `${key}:${idx}`;
+          if (key) {
+            word.dataset.k = `${key}:${idx}`;
+            const [s, a] = key.split(":");
+            const spoken = wordList(Number(s), Number(a)).length;
+            if (spoken && idx === spoken) word.classList.add("num");
+          }
           span.appendChild(word);
         }
         word.textContent += ch;
