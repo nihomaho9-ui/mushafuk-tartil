@@ -228,8 +228,15 @@
 .t-miss-row { cursor: pointer; }
 .t-miss-row:hover { background: var(--fresh); }
 .t-miss-empty, .t-sum p { color: var(--muted); margin: 0; }
-.w.err { box-shadow: inset 0 -0.08em 0 #9c2f24; }
-.tartil.mic .w.err:not(.on):not(.retry) { box-shadow: none; }
+.tartil.mic .w.cue { box-shadow: inset 0 -0.12em 0 var(--ink); }
+.w.err-miss,
+.tartil.mic .w.err-miss { box-shadow: inset 0 -0.1em 0 #9c2f24; }
+.w.err-vowel,
+.tartil.mic .w.err-vowel { box-shadow: inset 0 -0.1em 0 #c4a017; }
+.w.err-skip,
+.tartil.mic .w.err-skip { box-shadow: inset 0 -0.1em 0 #2a5db0; }
+.w.err-repeat,
+.tartil.mic .w.err-repeat { box-shadow: inset 0 -0.1em 0 #8a5a12; }
 
 .tartil.mic .w,
 .tartil.mic .basmala {

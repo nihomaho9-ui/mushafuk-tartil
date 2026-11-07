@@ -32,7 +32,10 @@ type FeedSession = {
   zipformer: {
     setMode: (mode: "tracking" | "correction") => unknown;
     setExpected: (passage: { surah: number; ayah: number; ayahEnd?: number } | null) => void;
-    correct: (action: "review_later") => unknown;
+    setStructural: (opts: { ayahOrder?: boolean; similarVerse?: boolean; timing?: "stop" | "pause" }) => Promise<void>;
+    setSlipHead: (mode: false | "strict" | "high") => void;
+    correct: (action: "review_later" | "retry" | "continue") => unknown;
+    correction: { state: { phase?: string } };
   } | null;
 };
 type Issue = { surah?: number; ayah?: number; word?: number; kind?: string };
@@ -107,6 +110,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let session: FeedSession | null = null;
   let expectedSurah = 0;
   let retryKey = "";
+  let ayahLock = "";
+  let lockDirty = false;
+  let rearm = false;
+  let settling = false;
+  let wake: WakeLockSentinel | null = null;
   let heard = 0;
   let takeMisses: Miss[] = [];
   let retryClose = false;
@@ -201,9 +209,29 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
 
   function paintMisses(): void {
-    const marks = new Set(misses.map((m) => `${m.s}:${m.a}:${m.w}`));
+    const rank: Record<string, number> = { "err-skip": 4, "err-miss": 3, "err-repeat": 2, "err-vowel": 1 };
+    const mark = new Map<string, string>();
+    const put = (key: string, cls: string) => {
+      const prev = mark.get(key);
+      if (!prev || rank[cls] > rank[prev]) mark.set(key, cls);
+    };
+    for (const m of misses) {
+      const cls = m.kind === "possible_vowel"
+        ? "err-vowel"
+        : m.kind === "possible_repetition"
+          ? "err-repeat"
+          : m.kind === "possible_skipped_ayah" || m.kind === "unclear_ayah"
+            ? "err-skip"
+            : "err-miss";
+      if (cls === "err-skip" || m.w < 0) {
+        const total = wordList(m.s, m.a).length;
+        for (let i = 0; i < total; i += 1) put(`${m.s}:${m.a}:${i}`, cls);
+      } else put(`${m.s}:${m.a}:${m.w}`, cls);
+    }
     sheet.querySelectorAll<HTMLElement>(".w").forEach((el) => {
-      el.classList.toggle("err", marks.has(el.dataset.k || ""));
+      el.classList.remove("err", "err-miss", "err-vowel", "err-skip", "err-repeat");
+      const cls = mark.get(el.dataset.k || "");
+      if (cls) el.classList.add(cls);
     });
     const total = misses.reduce((n, m) => n + (m.n || 1), 0);
     missBtn.textContent = `Xəta ${total}`;
@@ -530,6 +558,61 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       el.classList.toggle("on", shown.has(key));
       el.classList.toggle("fresh", key === freshKey);
     });
+    paintCue();
+  }
+
+  function paintCue(): void {
+    sheet.querySelectorAll(".cue").forEach((el) => el.classList.remove("cue"));
+    if (!micOn || root.classList.contains("retry")) return;
+    const words = sheet.querySelectorAll<HTMLElement>(".w");
+    for (const el of words) {
+      if (el.classList.contains("num")) continue;
+      const key = el.dataset.k || "";
+      if (!key || shown.has(key)) continue;
+      if (ayahLock && !key.startsWith(`${ayahLock}:`)) continue;
+      el.classList.add("cue");
+      break;
+    }
+  }
+
+  function rewindLock(): void {
+    if (!ayahLock) return;
+    const [ls, la] = ayahLock.split(":").map(Number);
+    for (const key of [...shown]) {
+      const parts = key.split(":");
+      if (parts.length < 3) continue;
+      const ks = Number(parts[0]);
+      const ka = Number(parts[1]);
+      if (ks > ls || (ks === ls && ka >= la)) shown.delete(key);
+    }
+    for (const [key, id] of [...timers]) {
+      const parts = key.split(":");
+      if (parts.length < 3) continue;
+      const ks = Number(parts[0]);
+      const ka = Number(parts[1]);
+      if (ks > ls || (ks === ls && ka >= la)) {
+        window.clearTimeout(id);
+        timers.delete(key);
+      }
+    }
+  }
+
+  function holdAyah(surah: number, ayah: number): void {
+    const key = `${surah}:${ayah}`;
+    if (!ayahLock) {
+      ayahLock = key;
+      lockDirty = false;
+    } else if (ayahLock === key && !rearm) lockDirty = true;
+    else {
+      const [ls, la] = ayahLock.split(":").map(Number);
+      if (surah < ls || (surah === ls && ayah < la)) {
+        ayahLock = key;
+        lockDirty = false;
+      }
+    }
+    rearm = true;
+    rewindLock();
+    applyShown();
   }
 
   function go(n: number): void {
@@ -565,6 +648,21 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         });
       }
       if (ayah === 1) shown.add(`bism:${surah}`);
+      if (ayahLock === `${surah}:${ayah}` && idx === total - 1 && !rearm) {
+        if (lockDirty) {
+          lockDirty = false;
+          rearm = true;
+          rewindLock();
+          setStatus("Yenidən", `${AZ[surah - 1] ?? surah} ${ayah} — ayəni təmiz oxuyun.`);
+          applyShown();
+          return;
+        }
+        misses = misses.filter((m) => !(m.s === surah && m.a === ayah));
+        saveMisses();
+        paintMisses();
+        ayahLock = "";
+        setStatus("Düzəldi", "Ayə təmizdir. Davam edə bilərsiniz.");
+      }
     }
     if (/^\d+:\d+:\d+$/.test(key)) {
       const bits = key.split(":").map(Number);
@@ -590,6 +688,14 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
 
   function schedule(surah: number, ayah: number, indices: number[]): void {
     if (surah === 1 && ayah === 1 && pageOf.get("1:1") !== page) return;
+    if (ayahLock) {
+      const [ls, la] = ayahLock.split(":").map(Number);
+      if (surah > ls || (surah === ls && ayah > la)) return;
+    }
+    if (rearm) {
+      if (ayahLock !== `${surah}:${ayah}` || Math.min(...indices) > 0) return;
+      rearm = false;
+    }
     const fresh = indices
       .filter((i) => {
         const key = `${surah}:${ayah}:${i}`;
@@ -611,10 +717,40 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   function onEvent(msg: ProgressMsg): void {
     if (msg.type === "correction" || msg.type === "correction_note") {
       const issue = msg.type === "correction_note" ? msg.issue : msg.state?.issue;
-      const flag = msg.type === "correction_note" || msg.state?.phase === "error";
-      if (issue && flag) {
+      const phase = msg.state?.phase;
+      if (msg.type === "correction_note" && issue) {
         remember(issue);
-        if (msg.type === "correction") queueMicrotask(() => session?.zipformer?.correct("review_later"));
+        return;
+      }
+      if (phase === "error" && issue?.surah && issue.ayah) {
+        remember(issue);
+        holdAyah(issue.surah, issue.ayah);
+        if (!settling) {
+          settling = true;
+          try {
+            session?.zipformer?.correct("retry");
+          } finally {
+            settling = false;
+          }
+        }
+        return;
+      }
+      if (phase === "corrected" && issue?.surah && issue.ayah) {
+        misses = misses.filter((m) => !(m.s === issue.surah && m.a === issue.ayah && m.w === (issue.word ?? -1)));
+        saveMisses();
+        paintMisses();
+        lockDirty = false;
+        if (!settling) {
+          settling = true;
+          try {
+            session?.zipformer?.correct("continue");
+          } finally {
+            settling = false;
+          }
+        }
+        const name = AZ[issue.surah - 1] ?? String(issue.surah);
+        setStatus("Düzəldi", `${name} ${issue.ayah} — söz düzəldi. Ayəni bitirin.`);
+        return;
       }
       return;
     }
@@ -693,7 +829,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       },
     });
     session = created;
-    created.zipformer?.setMode("correction");
+    if (created.zipformer) {
+      await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "pause" });
+      created.zipformer.setSlipHead("strict");
+      created.zipformer.setMode("correction");
+    }
     loadingModel = false;
     setProgress(null);
     return created;
@@ -769,6 +909,19 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     levelFill.style.width = `${Math.min(100, Math.round(rms * 450))}%`;
   }
 
+  async function lockWake(): Promise<void> {
+    try {
+      wake = await navigator.wakeLock?.request("screen") ?? null;
+    } catch {
+      wake = null;
+    }
+  }
+
+  function onVisible(): void {
+    if (micOn && document.visibilityState === "visible") void lockWake();
+  }
+  document.addEventListener("visibilitychange", onVisible);
+
   async function beginRetry(m: Miss): Promise<void> {
     retryKey = m.w >= 0 ? `${m.s}:${m.a}:${m.w}` : `${m.s}:${m.a}:*`;
     missBox.hidden = true;
@@ -800,6 +953,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     root.classList.remove("mic");
     root.classList.add("retry");
     session?.reset();
+    session?.zipformer?.setMode("correction");
     shown.clear();
     freshKey = "";
     clearTimers();
@@ -818,11 +972,15 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     const engine = await ensureSession();
     engine.reset();
+    engine.zipformer?.setMode("correction");
     shown.clear();
     freshKey = "";
     clearTimers();
     heard = 0;
     takeMisses = [];
+    ayahLock = "";
+    lockDirty = false;
+    rearm = false;
     sumBox.hidden = true;
     expectedSurah = 0;
     const retrying = Boolean(retryKey);
@@ -839,6 +997,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     root.classList.toggle("retry", retrying);
     micBtn.setAttribute("aria-pressed", "true");
     levelBar.classList.add("on");
+    void lockWake();
     applyShown();
     markRetry();
     if (retrying) {
@@ -887,6 +1046,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       gain.disconnect();
       stream.getTracks().forEach((t) => t.stop());
       await ctx.close();
+      const phase = engine.zipformer?.correction?.state?.phase;
+      if (phase && phase !== "idle") engine.zipformer?.correct("review_later");
       try {
         const flushed = await engine.stop();
         if (Array.isArray(flushed)) {
@@ -917,6 +1078,9 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const fixed = retryClose;
     retryClose = false;
     retryKey = "";
+    ayahLock = "";
+    lockDirty = false;
+    rearm = false;
     const nHeard = heard;
     const found = takeMisses;
     heard = 0;
@@ -924,6 +1088,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     setProgress(null);
     if (nHeard || found.length) showSummary(fixed, nHeard, found);
     else setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
+    void wake?.release();
+    wake = null;
     render();
   }
 
@@ -1021,12 +1187,18 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, model təsdiqləyəndə açılır.");
   const onResize = () => fit();
   window.addEventListener("resize", onResize);
+  if ("serviceWorker" in navigator) {
+    const sw = asset("sw.js");
+    void navigator.serviceWorker.register(sw).catch(() => undefined);
+  }
 
   return () => {
     alive = false;
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("resize", onResize);
+    document.removeEventListener("visibilitychange", onVisible);
     clearTimers();
+    void wake?.release();
     if (micOn) void stopMic();
   };
 }
