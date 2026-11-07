@@ -1311,28 +1311,48 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     const ctx = new AudioContext();
     void ctx.resume();
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
+    if (!micOn) {
+      stream.getTracks().forEach((t) => t.stop());
+      void ctx.close();
+      return;
+    }
     const source = ctx.createMediaStreamSource(stream);
     const proc = ctx.createScriptProcessor(4096, 1, 1);
     const gain = ctx.createGain();
     gain.gain.value = 0;
     let pending = new Float32Array(0);
-    let chain: Promise<unknown> = Promise.resolve();
-    const chunkSize = 4000;
+    let feeding = false;
+    let feedDone: (() => void) | null = null;
+    const chunkSize = 4800;
+    const pump = () => {
+      if (!micOn || feeding || pending.length < chunkSize) {
+        if (!feeding && !micOn) feedDone?.();
+        return;
+      }
+      const slice = pending.slice(0, chunkSize);
+      pending = pending.slice(chunkSize);
+      feeding = true;
+      void engine.feed(slice).catch(() => undefined).then(() => {
+        feeding = false;
+        if (!micOn) {
+          feedDone?.();
+          return;
+        }
+        window.setTimeout(pump, 0);
+      });
+    };
     proc.onaudioprocess = (ev) => {
       if (!micOn) return;
       const raw = ev.inputBuffer.getChannelData(0);
       setLevel(raw);
       const next = resample(raw, ctx.sampleRate);
+      if (pending.length > 16000) pending = pending.slice(pending.length - 8000);
       const merged = new Float32Array(pending.length + next.length);
       merged.set(pending, 0);
       merged.set(next, pending.length);
-      let offset = 0;
-      while (merged.length - offset >= chunkSize) {
-        const slice = merged.slice(offset, offset + chunkSize);
-        offset += chunkSize;
-        chain = chain.then(() => engine.feed(slice)).catch(() => undefined);
-      }
-      pending = merged.slice(offset);
+      pending = merged;
+      if (!feeding) pump();
     };
     source.connect(proc);
     proc.connect(gain);
@@ -1348,10 +1368,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       }
       stream.getTracks().forEach((t) => t.stop());
       void ctx.close();
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          if (!feeding) resolve();
+          else feedDone = resolve;
+        }),
+        new Promise((resolve) => window.setTimeout(resolve, 700)),
+      ]);
       try {
         await Promise.race([
           (async () => {
-            await chain.catch(() => undefined);
             const phase = engine.zipformer?.correction?.state?.phase;
             if (phase && phase !== "idle") engine.zipformer?.correct("review_later");
             const flushed = await engine.stop();
@@ -1362,7 +1388,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
             }
             engine.reset();
           })(),
-          new Promise((resolve) => window.setTimeout(resolve, 1200)),
+          new Promise((resolve) => window.setTimeout(resolve, 900)),
         ]);
       } catch {
         /* flush is best-effort */
