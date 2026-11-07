@@ -1,4 +1,6 @@
 import "./tartil.css";
+import wordsData from "./data/words.json";
+import pagesData from "./data/pages.json";
 
 const DELAY_MIN = 1200;
 const DELAY_STEP = 100;
@@ -50,8 +52,8 @@ function clampPage(n: number): number {
 
 export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () => void {
   const hashMode = opts?.hash === true;
-  let words: WordsFile | null = null;
-  let pages: number[][][] = [];
+  let words: WordsFile | null = wordsData as WordsFile;
+  let pages: number[][][] = (pagesData as PagesFile).pages;
   const pageOf = new Map<string, number>();
   const surahPage = new Map<number, number>();
   let page = 1;
@@ -478,46 +480,36 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     if (ev.key === "ArrowRight") go(page - 1);
   }
 
-  void (async () => {
-    const [wordsRes, pagesRes] = await Promise.all([fetch(asset("words.json")), fetch(asset("pages.json"))]);
-    if (!wordsRes.ok || !pagesRes.ok) {
-      setStatus("Mətn açılmadı", "Quran faylları yüklənmədi.");
-      return;
+  pages.forEach((ayahs, i) => {
+    for (const pair of ayahs) {
+      const surah = pair[0] ?? 0;
+      const ayah = pair[1] ?? 0;
+      const key = `${surah}:${ayah}`;
+      if (!pageOf.has(key)) pageOf.set(key, i + 1);
+      if (ayah === 1 && !surahPage.has(surah)) surahPage.set(surah, i + 1);
     }
-    words = (await wordsRes.json()) as WordsFile;
-    const parsed = (await pagesRes.json()) as PagesFile;
-    pages = parsed.pages;
-    pages.forEach((ayahs, i) => {
-      for (const pair of ayahs) {
-        const surah = pair[0] ?? 0;
-        const ayah = pair[1] ?? 0;
-        const key = `${surah}:${ayah}`;
-        if (!pageOf.has(key)) pageOf.set(key, i + 1);
-        if (ayah === 1 && !surahPage.has(surah)) surahPage.set(surah, i + 1);
-      }
-    });
-    AZ.forEach((name, i) => {
-      const opt = document.createElement("option");
-      opt.value = String(i + 1);
-      opt.textContent = `${i + 1}. ${name}`;
-      surahSel.appendChild(opt);
-    });
-    let start = 1;
-    if (hashMode) {
-      const fromHash = Number((location.hash || "").replace("#", ""));
-      if (fromHash) start = fromHash;
-    }
-    try {
-      const saved = Number(localStorage.getItem("tartil.page") || "");
-      if (!hashMode && saved) start = saved;
-      if (hashMode && !Number((location.hash || "").replace("#", "")) && saved) start = saved;
-    } catch {
-      /* ignore */
-    }
-    page = clampPage(start);
-    render();
-    setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, oxuduqca 1–2 saniyə sonra görünür.");
-  })();
+  });
+  AZ.forEach((name, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i + 1);
+    opt.textContent = `${i + 1}. ${name}`;
+    surahSel.appendChild(opt);
+  });
+  let start = 1;
+  if (hashMode) {
+    const fromHash = Number((location.hash || "").replace("#", ""));
+    if (fromHash) start = fromHash;
+  }
+  try {
+    const saved = Number(localStorage.getItem("tartil.page") || "");
+    if (!hashMode && saved) start = saved;
+    if (hashMode && !Number((location.hash || "").replace("#", "")) && saved) start = saved;
+  } catch {
+    /* ignore */
+  }
+  page = clampPage(start);
+  render();
+  setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, oxuduqca 1–2 saniyə sonra görünür.");
 
   return () => {
     alive = false;
