@@ -106,6 +106,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let loadingModel = false;
   let session: FeedSession | null = null;
   let expectedSurah = 0;
+  let retryKey = "";
+  let heard = 0;
+  let takeMisses: Miss[] = [];
+  let retryClose = false;
   let audioStop: (() => Promise<void>) | null = null;
   const shown = new Set<string>();
   const timers = new Map<string, number>();
@@ -115,6 +119,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   root.innerHTML = `
     <header class="t-top">
       <div class="t-brand"><b>TARTIL</b><span>oxu izləmə</span></div>
+      <button type="button" class="t-theme" aria-label="Rəng: krem"></button>
       <button type="button" class="t-missbtn" aria-expanded="false">Xəta 0</button>
       <select class="t-surah" aria-label="Surə"></select>
       <div class="t-pager">
@@ -133,11 +138,17 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         <b class="t-st">Oxu</b>
         <span class="t-sub">Mikrofonu açın: ayələr gizlənir, model təsdiqləyəndə açılır.</span>
         <div class="t-load" aria-hidden="true"><i></i></div>
+        <div class="t-level" aria-hidden="true"><i></i></div>
       </div>
     </div>
     <div class="t-miss" hidden>
       <div class="t-miss-h"><b>Xəta yerləri</b><button type="button" class="t-miss-clear">Təmizlə</button></div>
       <div class="t-miss-list"></div>
+    </div>
+    <div class="t-sum" hidden>
+      <div class="t-sum-h"><b>Hesab</b><button type="button" class="t-sum-ok">Bağla</button></div>
+      <p class="t-sum-n"></p>
+      <ul class="t-sum-list"></ul>
     </div>`;
 
   if (!hashMode) {
@@ -164,6 +175,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   const sub = need<HTMLElement>(".t-sub");
   const loadBar = need<HTMLElement>(".t-load");
   const loadFill = need<HTMLElement>(".t-load i");
+  const levelBar = need<HTMLElement>(".t-level");
+  const levelFill = need<HTMLElement>(".t-level i");
+  const themeBtn = need<HTMLButtonElement>(".t-theme");
+  const sumBox = need<HTMLElement>(".t-sum");
+  const sumN = need<HTMLElement>(".t-sum-n");
+  const sumList = need<HTMLElement>(".t-sum-list");
   const missBtn = need<HTMLButtonElement>(".t-missbtn");
   const missBox = need<HTMLElement>(".t-miss");
   const missList = need<HTMLElement>(".t-miss-list");
@@ -207,10 +224,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const times = m.n > 1 ? ` · ${m.n}` : "";
       row.textContent = `${name} ${m.a}${m.w >= 0 ? `, söz ${m.w + 1}` : ""} — ${kind}${times}`;
       row.addEventListener("click", () => {
-        const target = pageOf.get(`${m.s}:${m.a}`);
-        missBox.hidden = true;
-        missBtn.setAttribute("aria-expanded", "false");
-        if (target) go(target);
+        void beginRetry(m);
       });
       missList.appendChild(row);
     });
@@ -226,6 +240,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     if (prev) prev.n += 1;
     else misses.push({ s, a, w, kind, n: 1, t: Date.now() });
     if (misses.length > 200) misses = misses.slice(-200);
+    takeMisses.push({ s, a, w, kind, n: 1, t: Date.now() });
     saveMisses();
     paintMisses();
     const name = AZ[s - 1] ?? String(s);
@@ -241,6 +256,33 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     misses = [];
     saveMisses();
     paintMisses();
+  });
+  need<HTMLButtonElement>(".t-sum-ok").addEventListener("click", () => {
+    sumBox.hidden = true;
+  });
+  const themes = ["cream", "white", "black"] as const;
+  let theme: (typeof themes)[number] = "cream";
+  try {
+    const savedTheme = localStorage.getItem("tartil.theme");
+    if (savedTheme === "white" || savedTheme === "black" || savedTheme === "cream") theme = savedTheme;
+  } catch {
+    /* ignore */
+  }
+  function applyTheme(name: (typeof themes)[number]): void {
+    theme = name;
+    root.classList.toggle("theme-white", name === "white");
+    root.classList.toggle("theme-black", name === "black");
+    const label = name === "white" ? "ağ" : name === "black" ? "qara" : "krem";
+    themeBtn.setAttribute("aria-label", `Rəng: ${label}`);
+    try {
+      localStorage.setItem("tartil.theme", name);
+    } catch {
+      /* ignore quota */
+    }
+  }
+  applyTheme(theme);
+  themeBtn.addEventListener("click", () => {
+    applyTheme(themes[(themes.indexOf(theme) + 1) % themes.length]);
   });
 
   function setStatus(title: string, detail: string): void {
@@ -460,7 +502,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     if (!alive || id !== paint) return;
     draw(n);
     fit();
-    if (micOn) applyShown();
+    if (micOn || retryKey) applyShown();
+    if (retryKey) markRetry();
     paintMisses();
     pageInput.value = String(n);
     const first = pages[n - 1]?.[0];
@@ -506,8 +549,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const target = pageOf.get(`${surah}:${ayah}`);
       if (target && target !== page) {
         page = target;
-        render();
-        return;
+        if (!retryHit(key)) {
+          render();
+          return;
+        }
       }
       const total = wordList(surah, ayah).length;
       const idx = Number(parts[2]);
@@ -521,7 +566,26 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       }
       if (ayah === 1) shown.add(`bism:${surah}`);
     }
+    if (/^\d+:\d+:\d+$/.test(key)) {
+      const bits = key.split(":").map(Number);
+      if (bits[2] < wordList(bits[0], bits[1]).length) heard += 1;
+    }
+    if (retryHit(key)) {
+      const bits = key.split(":").map(Number);
+      const whole = retryKey.endsWith(":*");
+      misses = misses.filter((m) => !(m.s === bits[0] && m.a === bits[1] && (whole || m.w === bits[2])));
+      saveMisses();
+      retryKey = "";
+      retryClose = true;
+      paintMisses();
+      applyShown();
+      queueMicrotask(() => {
+        if (micOn) void stopMic();
+      });
+      return;
+    }
     applyShown();
+    if (retryKey) markRetry();
   }
 
   function schedule(surah: number, ayah: number, indices: number[]): void {
@@ -538,7 +602,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const id = window.setTimeout(() => reveal(key), delay);
       timers.set(key, id);
     });
-    if (fresh.length) {
+    if (fresh.length && !retryKey) {
       const name = AZ[surah - 1] ?? String(surah);
       setStatus("Dinləyirəm", `${name} ${ayah}`);
     }
@@ -651,10 +715,100 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
 
   function expectSurah(surah: number): void {
-    if (!session?.zipformer || !words || expectedSurah === surah) return;
+    if (retryKey || !session?.zipformer || !words || expectedSurah === surah) return;
     expectedSurah = surah;
     const total = words.ayahs[surah - 1]?.length ?? 1;
     session.zipformer.setExpected({ surah, ayah: 1, ayahEnd: total });
+  }
+
+  function retryHit(key: string): boolean {
+    if (!retryKey) return false;
+    if (retryKey.endsWith(":*")) {
+      const [s, a] = retryKey.split(":");
+      const last = wordList(Number(s), Number(a)).length - 1;
+      return key === `${s}:${a}:${last}`;
+    }
+    return key === retryKey;
+  }
+
+  function isRetryWord(key: string): boolean {
+    if (!retryKey) return false;
+    if (retryKey.endsWith(":*")) {
+      const prefix = retryKey.slice(0, -1);
+      if (!key.startsWith(prefix)) return false;
+      const [s, a] = retryKey.split(":");
+      return Number(key.slice(prefix.length)) < wordList(Number(s), Number(a)).length;
+    }
+    return key === retryKey;
+  }
+
+  function markRetry(): void {
+    sheet.querySelectorAll<HTMLElement>(".w").forEach((el) => {
+      el.classList.toggle("retry", isRetryWord(el.dataset.k || ""));
+    });
+  }
+
+  function showSummary(fixed: boolean, nHeard: number, found: Miss[]): void {
+    sumN.textContent = `Düz söz: ${nHeard}. Xəta: ${found.length}.`;
+    sumList.replaceChildren();
+    found.forEach((m) => {
+      const li = document.createElement("li");
+      const name = AZ[m.s - 1] ?? String(m.s);
+      li.textContent = `${name} ${m.a}${m.w >= 0 ? `, söz ${m.w + 1}` : ""} — ${KIND_AZ[m.kind] ?? "xəta"}`;
+      sumList.appendChild(li);
+    });
+    sumBox.hidden = false;
+    setStatus(fixed ? "Düzəldi" : "Hesab", sumN.textContent || "");
+  }
+
+  function setLevel(raw: Float32Array): void {
+    let acc = 0;
+    const step = 8;
+    for (let i = 0; i < raw.length; i += step) acc += raw[i] * raw[i];
+    const rms = Math.sqrt(acc / Math.max(1, Math.ceil(raw.length / step)));
+    levelFill.style.width = `${Math.min(100, Math.round(rms * 450))}%`;
+  }
+
+  async function beginRetry(m: Miss): Promise<void> {
+    retryKey = m.w >= 0 ? `${m.s}:${m.a}:${m.w}` : `${m.s}:${m.a}:*`;
+    missBox.hidden = true;
+    missBtn.setAttribute("aria-expanded", "false");
+    sumBox.hidden = true;
+    const target = pageOf.get(`${m.s}:${m.a}`);
+    if (target) page = clampPage(target);
+    const name = AZ[m.s - 1] ?? String(m.s);
+    const place = `${name} ${m.a}${m.w >= 0 ? `, söz ${m.w + 1}` : ""}`;
+    if (!micOn) {
+      await render();
+      micBtn.disabled = true;
+      try {
+        await startMic();
+      } catch (err: unknown) {
+        micOn = false;
+        retryKey = "";
+        root.classList.remove("mic", "retry");
+        levelBar.classList.remove("on");
+        const message = err instanceof Error ? err.message : "Mikrofon açılmadı";
+        setStatus("Alınmadı", message);
+      } finally {
+        micBtn.disabled = false;
+      }
+      return;
+    }
+    heard = 0;
+    takeMisses = [];
+    root.classList.remove("mic");
+    root.classList.add("retry");
+    session?.reset();
+    shown.clear();
+    freshKey = "";
+    clearTimers();
+    expectedSurah = 0;
+    session?.zipformer?.setExpected({ surah: m.s, ayah: m.a, ayahEnd: m.a });
+    expectedSurah = m.s;
+    await render();
+    markRetry();
+    setStatus("Təkrar", `${place} — yalnız bu yer gizlidir`);
   }
 
   async function startMic(): Promise<void> {
@@ -667,14 +821,34 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     shown.clear();
     freshKey = "";
     clearTimers();
+    heard = 0;
+    takeMisses = [];
+    sumBox.hidden = true;
     expectedSurah = 0;
-    const here = pages[page - 1]?.[0]?.[0];
-    if (here) expectSurah(here);
+    const retrying = Boolean(retryKey);
+    if (retrying) {
+      const [s, a] = retryKey.split(":").map(Number);
+      engine.zipformer?.setExpected({ surah: s, ayah: a, ayahEnd: a });
+      expectedSurah = s;
+    } else {
+      const here = pages[page - 1]?.[0]?.[0];
+      if (here) expectSurah(here);
+    }
     micOn = true;
-    root.classList.add("mic");
+    root.classList.toggle("mic", !retrying);
+    root.classList.toggle("retry", retrying);
     micBtn.setAttribute("aria-pressed", "true");
+    levelBar.classList.add("on");
     applyShown();
-    setStatus("Dinləyirəm", "Ayələr gizləndi. Təsdiqlənən söz təxminən yarım saniyəyə açılır.");
+    markRetry();
+    if (retrying) {
+      const [s, a, w] = retryKey.split(":");
+      const name = AZ[Number(s) - 1] ?? s;
+      const word = w === "*" ? "" : `, söz ${Number(w) + 1}`;
+      setStatus("Təkrar", `${name} ${a}${word} — yalnız bu yer gizlidir`);
+    } else {
+      setStatus("Dinləyirəm", "Ayələr gizləndi. Nömrələr qalır. Təsdiqlənən söz açılır.");
+    }
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
@@ -690,6 +864,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     proc.onaudioprocess = (ev) => {
       if (!micOn) return;
       const raw = ev.inputBuffer.getChannelData(0);
+      setLevel(raw);
       const next = resample(raw, ctx.sampleRate);
       const merged = new Float32Array(pending.length + next.length);
       merged.set(pending, 0);
@@ -731,14 +906,24 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     audioStop = null;
     if (stop) await stop();
     micOn = false;
-    root.classList.remove("mic");
+    root.classList.remove("mic", "retry");
     micBtn.setAttribute("aria-pressed", "false");
+    levelBar.classList.remove("on");
+    levelFill.style.width = "0";
     clearTimers();
     shown.clear();
     freshKey = "";
     expectedSurah = 0;
+    const fixed = retryClose;
+    retryClose = false;
+    retryKey = "";
+    const nHeard = heard;
+    const found = takeMisses;
+    heard = 0;
+    takeMisses = [];
     setProgress(null);
-    setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
+    if (nHeard || found.length) showSummary(fixed, nHeard, found);
+    else setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
     render();
   }
 
@@ -752,7 +937,9 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     void startMic()
       .catch((err: unknown) => {
         micOn = false;
-        root.classList.remove("mic");
+        retryKey = "";
+        root.classList.remove("mic", "retry");
+        levelBar.classList.remove("on");
         const message = err instanceof Error ? err.message : "Mikrofon açılmadı";
         const denied = /denied|permission|notallowed/i.test(message);
         setStatus(

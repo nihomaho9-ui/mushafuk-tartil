@@ -1,12 +1,37 @@
 .tartil {
+  --paper: #fffaf0;
+  --ink: #1a1612;
+  --bar: #fffaf1;
+  --line: #e2d3b6;
+  --muted: #6d5c45;
+  --fresh: #f3e2b3;
+  --chip: #fffaf1;
   height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   direction: rtl;
-  background: #fffaf0;
-  color: #24190f;
+  background: var(--paper);
+  color: var(--ink);
   font-family: "Source Sans 3", "Segoe UI", sans-serif;
+}
+.tartil.theme-white {
+  --paper: #ffffff;
+  --ink: #161616;
+  --bar: #ffffff;
+  --line: #e4e4e4;
+  --muted: #5c5c5c;
+  --fresh: #ececec;
+  --chip: #ffffff;
+}
+.tartil.theme-black {
+  --paper: #111111;
+  --ink: #f4efe4;
+  --bar: #1a1a1a;
+  --line: #3a342c;
+  --muted: #cbbfa8;
+  --fresh: #3a3424;
+  --chip: #1c1c1c;
 }
 
 .tartil * { box-sizing: border-box; }
@@ -27,8 +52,8 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #fffaf0;
-  border-bottom: 1px solid #e7dcc4;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
 }
 
 .t-brand {
@@ -46,16 +71,16 @@
 
 .t-brand span {
   font-size: 11px;
-  color: #7a674c;
+  color: var(--muted);
 }
 
 .t-surah {
   flex: 1;
   min-width: 0;
   height: 40px;
-  border: 1px solid #d9c7a4;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fffaf1;
+  background: var(--chip);
   padding: 0 12px;
 }
 
@@ -69,8 +94,8 @@
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  border: 1px solid #d9c7a4;
-  background: #fffaf1;
+  border: 1px solid var(--line);
+  background: var(--chip);
   cursor: pointer;
 }
 
@@ -78,9 +103,9 @@
   width: 58px;
   height: 36px;
   text-align: center;
-  border: 1px solid #d9c7a4;
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fffaf1;
+  background: var(--chip);
   font-variant-numeric: tabular-nums;
 }
 
@@ -89,8 +114,8 @@
   min-height: 0;
   width: min(920px, 100%);
   margin: 0 auto;
-  background: #fffaf0;
-  color: #1a1612;
+  background: var(--paper);
+  color: var(--ink);
   border: 0;
   padding: 0 4px;
   display: flex;
@@ -143,14 +168,25 @@
   justify-content: center;
   gap: 0.28em;
   direction: rtl;
-  color: #1a1612;
+  color: var(--ink);
 }
 .sname { font-family: surahnames, serif; line-height: 1; }
-.basmala { font-family: QCF1, serif; line-height: 1; color: #1a1612; }
+.basmala { font-family: QCF1, serif; line-height: 1; color: var(--ink); }
+
+.t-theme {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  cursor: pointer;
+}
+.tartil.theme-black .t-theme { box-shadow: inset 0 0 0 2px #f4efe4; }
 
 .t-missbtn {
   border: 1px solid #e2c2b4;
-  background: #fffaf1;
+  background: var(--chip);
   color: #7a3b2e;
   border-radius: 999px;
   padding: 4px 10px;
@@ -158,7 +194,8 @@
   font-weight: 700;
   cursor: pointer;
 }
-.t-miss {
+.tartil.theme-black .t-missbtn { color: #f0b4a8; border-color: #6a3a32; }
+.t-miss, .t-sum {
   position: fixed;
   left: 10px;
   right: 10px;
@@ -166,15 +203,18 @@
   z-index: 8;
   max-height: 46vh;
   overflow: auto;
-  background: #fffaf0;
-  border: 1px solid #e2d3b6;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: 0 12px 32px rgba(40, 24, 8, 0.16);
   padding: 8px;
 }
-.t-miss-h { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 8px; }
-.t-miss-clear { border: 0; background: none; color: #7a3b2e; font-weight: 700; cursor: pointer; }
-.t-miss-row, .t-miss-empty {
+.t-miss-h, .t-sum-h { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 8px; }
+.t-miss-clear, .t-sum-ok { border: 0; background: none; color: #7a3b2e; font-weight: 700; cursor: pointer; }
+.tartil.theme-black .t-miss-clear,
+.tartil.theme-black .t-sum-ok { color: #f0b4a8; }
+.t-miss-row, .t-miss-empty, .t-sum p, .t-sum li {
   display: block;
   width: 100%;
   text-align: right;
@@ -184,11 +224,12 @@
   border-radius: 8px;
   font: inherit;
 }
+.t-sum ul { margin: 0; padding: 0; list-style: none; }
 .t-miss-row { cursor: pointer; }
-.t-miss-row:hover { background: #f6ecda; }
-.t-miss-empty { color: #6d5c45; margin: 0; }
+.t-miss-row:hover { background: var(--fresh); }
+.t-miss-empty, .t-sum p { color: var(--muted); margin: 0; }
 .w.err { box-shadow: inset 0 -0.08em 0 #9c2f24; }
-.tartil.mic .w.err:not(.on) { box-shadow: none; }
+.tartil.mic .w.err:not(.on):not(.retry) { box-shadow: none; }
 
 .tartil.mic .w,
 .tartil.mic .basmala {
@@ -196,11 +237,19 @@
   background: transparent;
 }
 
-.tartil.mic .w.num { color: #1a1612; }
+.tartil.mic .w.num { color: var(--ink); }
 
 .tartil.mic .w.on,
-.tartil.mic .basmala.on { color: #1a1612; }
-.tartil.mic .w.fresh { background: #f3e2b3; color: #1a1612; }
+.tartil.mic .basmala.on { color: var(--ink); }
+.tartil.mic .w.fresh { background: var(--fresh); color: var(--ink); }
+
+.tartil.retry .w,
+.tartil.retry .basmala { color: var(--ink); }
+.tartil.retry .w.retry {
+  color: transparent;
+  box-shadow: inset 0 -0.12em 0 #9c2f24;
+}
+.tartil.retry .w.retry.on { color: var(--ink); background: var(--fresh); }
 
 .t-bar {
   position: fixed;
@@ -212,8 +261,8 @@
   align-items: center;
   gap: 12px;
   padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
-  background: #fffaf1;
-  border-top: 1px solid #e2d3b6;
+  background: var(--bar);
+  border-top: 1px solid var(--line);
 }
 
 .t-mic {
@@ -229,34 +278,35 @@
   place-items: center;
 }
 
-.tartil.mic .t-mic {
+.tartil.mic .t-mic,
+.tartil.retry .t-mic {
   box-shadow: 0 0 0 6px #e7d3a4;
 }
 
 .t-mic:disabled { opacity: 0.55; cursor: progress; }
 .t-mic svg { width: 28px; height: 28px; fill: currentColor; }
 
-.t-status { min-width: 0; }
+.t-status { min-width: 0; flex: 1; }
 .t-status b { display: block; font-size: 15px; }
-.t-status span { display: block; color: #6d5c45; font-size: 13px; line-height: 1.35; }
+.t-status span { display: block; color: var(--muted); font-size: 13px; line-height: 1.35; }
 
-.t-foot {
-  display: none;
-}
+.t-foot { display: none; }
 .t-foot a { color: #6e5424; }
 
-.t-load {
+.t-load, .t-level {
   height: 4px;
   margin-top: 6px;
-  background: #eadcbf;
+  background: var(--line);
   border-radius: 99px;
   overflow: hidden;
   display: none;
 }
-.t-load.on { display: block; }
-.t-load i {
+.t-load.on, .t-level.on { display: block; }
+.t-load i, .t-level i {
   display: block;
   height: 100%;
   width: 0;
   background: #1c3d32;
 }
+.t-level i { background: #1c7a4a; }
+
