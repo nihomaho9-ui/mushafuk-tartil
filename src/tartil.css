@@ -3,6 +3,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  direction: rtl;
   background: #fffaf0;
   color: #24190f;
   font-family: "Source Sans 3", "Segoe UI", sans-serif;
@@ -176,7 +177,7 @@
 .t-miss-row, .t-miss-empty {
   display: block;
   width: 100%;
-  text-align: start;
+  text-align: right;
   border: 0;
   background: transparent;
   padding: 8px 6px;
