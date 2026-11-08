@@ -1346,18 +1346,41 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        channelCount: 1,
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48000 },
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
-      },
+        googEchoCancellation: false,
+        googNoiseSuppression: false,
+        googAutoGainControl: false,
+        googHighpassFilter: false,
+      } as MediaTrackConstraints,
     });
     if (!micOn) {
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
-    const ctx = new AudioContext();
-    void ctx.resume();
+    const track = stream.getAudioTracks()[0];
+    if (track) {
+      try {
+        await track.applyConstraints({
+          channelCount: 1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        });
+      } catch {
+        /* the browser keeps its own defaults */
+      }
+    }
+    let ctx: AudioContext;
+    try {
+      ctx = new AudioContext({ sampleRate: 16000, latencyHint: "interactive" });
+    } catch {
+      ctx = new AudioContext({ latencyHint: "interactive" });
+    }
+    await ctx.resume();
     await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
     if (!micOn) {
       stream.getTracks().forEach((t) => t.stop());
@@ -1371,20 +1394,6 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     let feeding = false;
     let feedDone: (() => void) | null = null;
     const chunkSize = 7680;
-    const lift = (samples: Float32Array): Float32Array => {
-      let acc = 0;
-      const step = 8;
-      for (let i = 0; i < samples.length; i += step) acc += samples[i] * samples[i];
-      const rms = Math.sqrt(acc / Math.max(1, Math.ceil(samples.length / step)));
-      if (rms < 0.004 || rms > 0.08) return samples;
-      const g = Math.min(3.5, 0.045 / rms);
-      const out = new Float32Array(samples.length);
-      for (let i = 0; i < samples.length; i += 1) {
-        const v = samples[i] * g;
-        out[i] = v > 1 ? 1 : v < -1 ? -1 : v;
-      }
-      return out;
-    };
     const pump = () => {
       if (!micOn || feeding || pending.length < chunkSize) {
         if (!feeding && !micOn) feedDone?.();
@@ -1393,7 +1402,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const slice = pending.slice(0, chunkSize);
       pending = pending.slice(chunkSize);
       feeding = true;
-      void engine.feed(lift(slice)).catch(() => undefined).then(() => {
+      void engine.feed(slice).catch(() => undefined).then(() => {
         feeding = false;
         if (!micOn) {
           feedDone?.();
@@ -1431,11 +1440,27 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       tap.connect(gain);
     } catch {
       proc = ctx.createScriptProcessor(4096, 1, 1);
+      let fbEnv = 0.0004;
+      let fbGain = 1;
+      let fbDcIn = 0;
+      let fbDcOut = 0;
       proc.onaudioprocess = (ev) => {
         if (!micOn) return;
         const raw = ev.inputBuffer.getChannelData(0);
         setLevel(raw);
-        pushPcm(resample(raw, ctx.sampleRate));
+        const pcm = resample(raw, ctx.sampleRate);
+        const shaped = new Float32Array(pcm.length);
+        for (let i = 0; i < pcm.length; i += 1) {
+          const blocked = pcm[i] - fbDcIn + 0.995 * fbDcOut;
+          fbDcIn = pcm[i];
+          fbDcOut = blocked;
+          fbEnv = fbEnv * 0.9996 + blocked * blocked * 0.0004;
+          const rms = Math.sqrt(fbEnv);
+          const target = rms > 0.0014 ? Math.min(10, 0.075 / rms) : 1;
+          fbGain += (target - fbGain) * 0.0008;
+          shaped[i] = Math.tanh(blocked * fbGain);
+        }
+        pushPcm(shaped);
       };
       source.connect(proc);
       proc.connect(gain);
