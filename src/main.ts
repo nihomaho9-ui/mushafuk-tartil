@@ -146,7 +146,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       <button type="button" class="t-hifz" aria-pressed="false">Hifz</button>
       <button type="button" class="t-listen">Dinlə</button>
       <button type="button" class="t-lesson">Dərs</button>
+      <button type="button" class="t-mine" hidden>Səsim</button>
+      <button type="button" class="t-back" hidden>Son</button>
       <select class="t-micpick" aria-label="Mikrofon" hidden></select>
+    </div>
+    <div class="t-range" hidden>
+      <b class="t-range-name">Dərs</b>
+      <select class="t-from" aria-label="Başlanğıc ayə"></select>
+      <span>–</span>
+      <select class="t-to" aria-label="Son ayə"></select>
+      <button type="button" class="t-range-go">Başla</button>
     </div>
     <main class="t-page" dir="rtl"></main>
     <p class="t-foot">Tanıma telefonun özündə işləyir. Model və lüğət NPL-1.2 — yalnız qeyri-kommersiya.</p>
@@ -215,6 +224,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let drill = false;
   let passes = 0;
   let passDirty = false;
+  const voiceChunks: Float32Array[] = [];
+  let voiceSamples = 0;
+  let captureOn = false;
+  let lastVoice: { s: number; a: number; pcm: Float32Array } | null = null;
   let quietStop = false;
   let playGen = 0;
   try {
@@ -555,6 +568,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     void beginRetry({ s: pair[0], a: pair[1], w: -1, kind: "oxu", n: 1, t: Date.now() });
   });
   const lessonBtn = need<HTMLButtonElement>(".t-lesson");
+  const mineBtn = need<HTMLButtonElement>(".t-mine");
+  const backBtn = need<HTMLButtonElement>(".t-back");
+  const rangeBox = need<HTMLElement>(".t-range");
+  const fromSel = need<HTMLSelectElement>(".t-from");
+  const toSel = need<HTMLSelectElement>(".t-to");
+  const rangeName = need<HTMLElement>(".t-range-name");
   function pageAyahs(): Array<[number, number]> {
     const seen = new Set<string>();
     const out: Array<[number, number]> = [];
@@ -566,23 +585,120 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     return out;
   }
+  function fillRange(): void {
+    const here = pageAyahs();
+    const surah = here[0]?.[0] || Number(surahSel.value) || 1;
+    const total = words?.ayahs[surah - 1]?.length || 1;
+    const name = AZ[surah - 1] ?? String(surah);
+    rangeName.textContent = name;
+    fromSel.replaceChildren();
+    toSel.replaceChildren();
+    for (let a = 1; a <= total; a += 1) {
+      const start = document.createElement("option");
+      start.value = String(a);
+      start.textContent = String(a);
+      fromSel.appendChild(start);
+      const end = document.createElement("option");
+      end.value = String(a);
+      end.textContent = String(a);
+      toSel.appendChild(end);
+    }
+    const onSurah = here.filter((pair) => pair[0] === surah);
+    fromSel.value = String(onSurah[0]?.[1] ?? 1);
+    toSel.value = String(onSurah[onSurah.length - 1]?.[1] ?? total);
+    rangeBox.hidden = false;
+  }
   lessonBtn.addEventListener("click", () => {
     if (lesson.length) {
       lesson = [];
       drill = false;
       lessonBtn.classList.remove("on");
+      rangeBox.hidden = true;
       if (micOn) void stopMic();
       return;
     }
-    const list = pageAyahs();
-    if (!list.length) return;
+    if (!rangeBox.hidden) {
+      rangeBox.hidden = true;
+      return;
+    }
+    fillRange();
+  });
+  need<HTMLButtonElement>(".t-range-go").addEventListener("click", () => {
+    const here = pageAyahs();
+    const surah = here[0]?.[0] || Number(surahSel.value) || 1;
+    let a1 = Number(fromSel.value);
+    let a2 = Number(toSel.value);
+    if (!a1 || !a2) return;
+    if (a2 < a1) {
+      const swap = a1;
+      a1 = a2;
+      a2 = swap;
+    }
+    const list: Array<[number, number]> = [];
+    for (let a = a1; a <= a2; a += 1) list.push([surah, a]);
     queueOn = false;
     drill = false;
     lesson = list;
     lessonAt = 0;
     passes = 0;
+    rangeBox.hidden = true;
     lessonBtn.classList.add("on");
-    void beginRetry({ s: list[0][0], a: list[0][1], w: -1, kind: "ders", n: 1, t: Date.now() });
+    void beginRetry({ s: surah, a: a1, w: -1, kind: "ders", n: 1, t: Date.now() });
+  });
+  function snapshotVoice(): void {
+    if (!voiceSamples || !retryKey) return;
+    const [s, a] = retryKey.split(":").map(Number);
+    if (!s || !a) return;
+    const pcm = new Float32Array(voiceSamples);
+    let at = 0;
+    for (const chunk of voiceChunks) {
+      pcm.set(chunk, at);
+      at += chunk.length;
+    }
+    lastVoice = { s, a, pcm };
+    mineBtn.hidden = false;
+  }
+  function playPcm(pcm: Float32Array): Promise<boolean> {
+    const gen = playGen;
+    return new Promise((resolve) => {
+      void (async () => {
+        try {
+          const ctx = voice ?? new AudioContext();
+          voice = ctx;
+          await ctx.resume();
+          if (gen !== playGen) {
+            resolve(false);
+            return;
+          }
+          const buf = ctx.createBuffer(1, pcm.length, 16000);
+          buf.copyToChannel(pcm, 0);
+          const src = ctx.createBufferSource();
+          const gain = ctx.createGain();
+          gain.gain.value = 1.6;
+          src.buffer = buf;
+          src.connect(gain);
+          gain.connect(ctx.destination);
+          voiceStop = () => src.stop();
+          src.onended = () => resolve(gen === playGen);
+          src.start();
+        } catch {
+          resolve(false);
+        }
+      })();
+    });
+  }
+  mineBtn.addEventListener("click", () => {
+    const clip = lastVoice;
+    if (!clip) return;
+    void (async () => {
+      if (micOn || audioStop) await stopMic();
+      const name = AZ[clip.s - 1] ?? String(clip.s);
+      setStatus("Səsim", `${name} ${clip.a} — əvvəl qari, sonra sən.`);
+      const ok = await playAyah(clip.s, clip.a);
+      if (!ok) return;
+      setStatus("Səsim", `${name} ${clip.a} — sənin oxuyuşun.`);
+      await playPcm(clip.pcm);
+    })();
   });
   const dayAyahs = new Set<string>();
   function todayStamp(): string {
@@ -884,6 +1000,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const first = pages[n - 1]?.[0];
     if (first) surahSel.value = String(first[0]);
     if (hashMode) history.replaceState(null, "", `#${n}`);
+    showBack();
     try {
       localStorage.setItem("tartil.page", String(n));
     } catch {
@@ -965,6 +1082,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
 
   function go(n: number): void {
     page = clampPage(n);
+    try {
+      localStorage.setItem("tartil.read", String(page));
+    } catch {
+      /* ignore quota */
+    }
     void render();
   }
 
@@ -980,6 +1102,13 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const target = pageOf.get(`${surah}:${ayah}`);
       if (target && target !== page) {
         page = target;
+        if (!retryKey) {
+          try {
+            localStorage.setItem("tartil.read", String(page));
+          } catch {
+            /* ignore quota */
+          }
+        }
         expectPage();
         if (!retryHit(key)) {
           render();
@@ -1555,6 +1684,9 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       if (here) expectPage();
     }
     micOn = true;
+    voiceChunks.length = 0;
+    voiceSamples = 0;
+    captureOn = true;
     calUntil = 0;
     calSum = 0;
     calN = 0;
@@ -1659,6 +1791,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     };
     const pushPcm = (next: Float32Array) => {
       if (!micOn || !next.length) return;
+      if (captureOn && voiceSamples < 16000 * 25) {
+        voiceChunks.push(next.slice());
+        voiceSamples += next.length;
+      }
       if (pending.length > 16000 * 15) pending = pending.slice(pending.length - 16000 * 12);
       const merged = new Float32Array(pending.length + next.length);
       merged.set(pending, 0);
@@ -1778,6 +1914,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     freshKey = "";
     expectedSurah = 0;
     const fixed = retryClose;
+    snapshotVoice();
+    captureOn = false;
     retryClose = false;
     retryKey = "";
     ayahLock = "";
@@ -1892,8 +2030,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     if (fromHash) start = fromHash;
   }
   let savedPage = 0;
+  let readPage = 0;
   try {
     savedPage = Number(localStorage.getItem("tartil.page") || "");
+    readPage = Number(localStorage.getItem("tartil.read") || "") || savedPage;
+    if (!localStorage.getItem("tartil.read") && savedPage) localStorage.setItem("tartil.read", String(savedPage));
     if (!hashMode && savedPage) start = savedPage;
     if (hashMode && !fromHash && savedPage) start = savedPage;
   } catch {
@@ -1906,6 +2047,14 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     if (errPage) start = errPage;
   }
   page = clampPage(start);
+  function showBack(): void {
+    const read = Number(localStorage.getItem("tartil.read") || "") || readPage;
+    backBtn.hidden = !read || read === page;
+  }
+  backBtn.addEventListener("click", () => {
+    const read = Number(localStorage.getItem("tartil.read") || "") || readPage;
+    if (read) go(read);
+  });
   void render();
   setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, model təsdiqləyəndə açılır.");
   const onResize = () => fit();

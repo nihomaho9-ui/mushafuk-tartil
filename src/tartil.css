@@ -95,6 +95,9 @@
 .t-hifz,
 .t-listen,
 .t-lesson,
+.t-mine,
+.t-back,
+.t-range-go,
 .t-micpick {
   flex: none;
   height: 28px;
@@ -108,6 +111,24 @@
   cursor: pointer;
 }
 .t-hifz.on, .t-lesson.on { background: var(--ink); color: var(--paper); }
+.t-range {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 6px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+.t-range b { font-size: 12px; }
+.t-from, .t-to {
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--ink);
+  padding: 0 8px;
+}
 .t-tools { flex-wrap: wrap; }
 
 .t-surah {
