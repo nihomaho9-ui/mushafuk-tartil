@@ -832,7 +832,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
 
   function fit(): void {
     pageEl.querySelectorAll<HTMLElement>(".line").forEach((line) => line.style.removeProperty("--g"));
-    const h = pageEl.clientHeight;
+    const h = Math.max(160, pageEl.clientHeight - 108);
     const w = pageEl.clientWidth - 12;
     if (!h || !w) return;
     let size = h / 15;
@@ -1026,14 +1026,22 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     timers.clear();
   }
 
+  let paintQueued = false;
   function applyShown(): void {
-    const nodes = sheet.querySelectorAll<HTMLElement>("[data-k]");
-    nodes.forEach((el) => {
-      const key = el.dataset.k || "";
-      el.classList.toggle("on", shown.has(key));
-      el.classList.toggle("fresh", key === freshKey);
+    if (paintQueued) return;
+    paintQueued = true;
+    window.requestAnimationFrame(() => {
+      paintQueued = false;
+      const nodes = sheet.querySelectorAll<HTMLElement>("[data-k]");
+      nodes.forEach((el) => {
+        const key = el.dataset.k || "";
+        const on = shown.has(key);
+        if (el.classList.contains("on") !== on) el.classList.toggle("on", on);
+        const fresh = key === freshKey;
+        if (el.classList.contains("fresh") !== fresh) el.classList.toggle("fresh", fresh);
+      });
+      paintCue();
     });
-    paintCue();
   }
 
   function paintCue(): void {
@@ -1823,7 +1831,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         return;
       }
       const slice = pending.slice(0, chunkSize);
-      pending = pending.slice(chunkSize);
+      pending = pending.length > chunkSize * 2 ? pending.slice(pending.length - chunkSize) : pending.slice(chunkSize);
       feeding = true;
       void engine.feed(slice).catch(() => undefined).then(() => {
         feeding = false;
@@ -1831,7 +1839,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
           feedDone?.();
           return;
         }
-        pump();
+        window.setTimeout(pump, 20);
       });
     };
     const pushPcm = (next: Float32Array) => {
@@ -1840,7 +1848,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         voiceChunks.push(next.slice());
         voiceSamples += next.length;
       }
-      if (pending.length > 16000 * 15) pending = pending.slice(pending.length - 16000 * 12);
+      if (pending.length > chunkSize * 2) pending = pending.slice(pending.length - chunkSize * 2);
       const merged = new Float32Array(pending.length + next.length);
       merged.set(pending, 0);
       merged.set(next, pending.length);
