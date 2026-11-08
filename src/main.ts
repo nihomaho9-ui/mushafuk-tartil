@@ -129,9 +129,9 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   root.innerHTML = `
     <header class="t-top">
       <div class="t-pager">
-        <button type="button" data-dir="-1" aria-label="Əvvəlki səhifə">‹</button>
+        <button type="button" data-dir="-1" aria-label="Əvvəlki səhifə">›</button>
         <input class="t-pageno" inputmode="numeric" aria-label="Səhifə" />
-        <button type="button" data-dir="1" aria-label="Növbəti səhifə">›</button>
+        <button type="button" data-dir="1" aria-label="Növbəti səhifə">‹</button>
       </div>
       <label class="t-ico t-surah-btn" aria-label="Surə">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 0-3 3V4z"/><path d="M5 4a3 3 0 0 0-3 3v13"/></svg>

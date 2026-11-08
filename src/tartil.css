@@ -159,6 +159,7 @@
   padding: 0 4px;
   display: flex;
   flex-direction: column;
+  direction: rtl;
   overflow: hidden;
   touch-action: pan-y;
   user-select: none;
@@ -166,7 +167,6 @@
 }
 
 .t-page.mid { justify-content: center; }
-.t-page.mid .line { flex: 0 0 calc(100% / 15); }
 
 .t-page .line {
   --g: 0.09em;
@@ -174,11 +174,12 @@
   min-height: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   direction: rtl;
   white-space: nowrap;
   line-height: 1;
 }
+.t-page.mid .line { flex: 0 0 calc(100% / 15); justify-content: center; }
 
 .t-page .line.basmala { font-family: QCF1, serif; }
 .t-page .line.stack { flex: 1.7 1 0; flex-direction: column; }
