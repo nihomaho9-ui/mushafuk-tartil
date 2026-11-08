@@ -1048,20 +1048,34 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const core = await import("@tilawa/core");
     const env = ort.env.wasm;
     env.numThreads = 1;
+    env.proxy = true;
     env.wasmPaths = new URL(asset("ort/"), window.location.href).href;
     const model = await loadBytes(asset("model.onnx"), "Model");
     setStatus("Lüğət açılır", "Ayə sözləri hazırlanır…");
     const corpusRes = await fetch(asset("corpus.json"));
     if (!corpusRes.ok) throw new Error("Lüğət açılmadı");
     const corpus: unknown = await corpusRes.json();
-    const created = await core.createRecognitionSession({
-      ort,
-      model,
-      corpus,
-      onEvent: (msg) => {
-        if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
-      },
-    });
+    let created: FeedSession;
+    try {
+      created = await core.createRecognitionSession({
+        ort,
+        model,
+        corpus,
+        onEvent: (msg: unknown) => {
+          if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
+        },
+      });
+    } catch {
+      env.proxy = false;
+      created = await core.createRecognitionSession({
+        ort,
+        model,
+        corpus,
+        onEvent: (msg: unknown) => {
+          if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
+        },
+      });
+    }
     session = created;
     if (created.zipformer) {
       await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "pause" });

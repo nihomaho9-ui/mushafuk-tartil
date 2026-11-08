@@ -279,16 +279,19 @@
 
 .w.warn { box-shadow: inset 0 -0.08em 0 var(--muted); }
 .tartil.hifz.mic .w,
-.tartil.hifz.mic .w.num,
 .tartil.hifz.mic .w.on,
 .tartil.hifz.mic .w.fresh,
 .tartil.hifz.mic .basmala,
 .tartil.hifz.mic .basmala.on,
-.tartil.hifz.mic .shead {
+.tartil.hifz.mic .snames {
   color: transparent;
   background: transparent;
 }
-.tartil.hifz.mic .w.cue { box-shadow: inset 0 -0.14em 0 var(--ink); }
+.tartil.hifz.mic .shead img { visibility: hidden; }
+.tartil.hifz.mic .w.num { color: var(--ink); }
+.tartil.hifz.mic .w.cue {
+  box-shadow: inset 0 -0.28em 0 var(--ink);
+}
 
 .tartil.mic .w.on,
 .tartil.mic .basmala.on { color: var(--ink); }
