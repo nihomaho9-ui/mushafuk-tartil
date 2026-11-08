@@ -122,7 +122,6 @@
   color: var(--ink);
   padding: 0 8px;
 }
-.t-range { direction: ltr; }
 
 .t-pager {
   display: flex;
