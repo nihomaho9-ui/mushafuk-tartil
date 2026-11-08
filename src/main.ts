@@ -1347,14 +1347,19 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: { ideal: 1 },
-        sampleRate: { ideal: 48000 },
+        sampleRate: { ideal: 16000 },
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
         googEchoCancellation: false,
+        googEchoCancellation2: false,
+        googDAEchoCancellation: false,
         googNoiseSuppression: false,
+        googNoiseSuppression2: false,
         googAutoGainControl: false,
+        googAutoGainControl2: false,
         googHighpassFilter: false,
+        googTypingNoiseDetection: false,
       } as MediaTrackConstraints,
     });
     if (!micOn) {
@@ -1440,10 +1445,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       tap.connect(gain);
     } catch {
       proc = ctx.createScriptProcessor(4096, 1, 1);
-      let fbEnv = 0.0004;
+      let fbEnv = 0.0002;
       let fbGain = 1;
-      let fbDcIn = 0;
-      let fbDcOut = 0;
+      let fbX1 = 0;
+      let fbY1 = 0;
+      const hp = Math.exp((-2 * Math.PI * 80) / 16000);
       proc.onaudioprocess = (ev) => {
         if (!micOn) return;
         const raw = ev.inputBuffer.getChannelData(0);
@@ -1451,14 +1457,15 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         const pcm = resample(raw, ctx.sampleRate);
         const shaped = new Float32Array(pcm.length);
         for (let i = 0; i < pcm.length; i += 1) {
-          const blocked = pcm[i] - fbDcIn + 0.995 * fbDcOut;
-          fbDcIn = pcm[i];
-          fbDcOut = blocked;
-          fbEnv = fbEnv * 0.9996 + blocked * blocked * 0.0004;
+          const y = hp * (fbY1 + pcm[i] - fbX1);
+          fbX1 = pcm[i];
+          fbY1 = y;
+          fbEnv = fbEnv * 0.9992 + y * y * 0.0008;
           const rms = Math.sqrt(fbEnv);
-          const target = rms > 0.0014 ? Math.min(10, 0.075 / rms) : 1;
-          fbGain += (target - fbGain) * 0.0008;
-          shaped[i] = Math.tanh(blocked * fbGain);
+          const target = rms > 0.0011 ? Math.min(18, 0.12 / rms) : 1;
+          const rate = target > fbGain ? 0.012 : 0.00035;
+          fbGain += (target - fbGain) * rate;
+          shaped[i] = Math.tanh(y * fbGain);
         }
         pushPcm(shaped);
       };

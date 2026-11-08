@@ -4,9 +4,10 @@ class MicTap extends AudioWorkletProcessor {
     this.ratio = sampleRate / 16000;
     this.pos = 0;
     this.lp = 0;
-    this.dcIn = 0;
-    this.dcOut = 0;
-    this.env = 0.0004;
+    this.x1 = 0;
+    this.y1 = 0;
+    this.hp = Math.exp((-2 * Math.PI * 80) / 16000);
+    this.env = 0.0002;
     this.gain = 1;
     this.buf = new Float32Array(7680);
     this.n = 0;
@@ -14,15 +15,15 @@ class MicTap extends AudioWorkletProcessor {
   }
 
   push(x) {
-    const blocked = x - this.dcIn + 0.995 * this.dcOut;
-    this.dcIn = x;
-    this.dcOut = blocked;
-    this.env = this.env * 0.9996 + blocked * blocked * 0.0004;
+    const y = this.hp * (this.y1 + x - this.x1);
+    this.x1 = x;
+    this.y1 = y;
+    this.env = this.env * 0.9992 + y * y * 0.0008;
     const rms = Math.sqrt(this.env);
-    const target = rms > 0.0014 ? Math.min(10, 0.075 / rms) : 1;
-    this.gain += (target - this.gain) * 0.0008;
-    const y = Math.tanh(blocked * this.gain);
-    this.buf[this.n] = y;
+    const target = rms > 0.0011 ? Math.min(18, 0.12 / rms) : 1;
+    const rate = target > this.gain ? 0.012 : 0.00035;
+    this.gain += (target - this.gain) * rate;
+    this.buf[this.n] = Math.tanh(y * this.gain);
     this.n += 1;
     if (this.n === this.buf.length) {
       const out = this.buf;
