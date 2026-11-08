@@ -145,6 +145,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       <button type="button" class="t-sense" aria-label="Həssaslıq">normal</button>
       <button type="button" class="t-hifz" aria-pressed="false">Hifz</button>
       <button type="button" class="t-listen">Dinlə</button>
+      <button type="button" class="t-lesson">Dərs</button>
       <select class="t-micpick" aria-label="Mikrofon" hidden></select>
     </div>
     <main class="t-page" dir="rtl"></main>
@@ -209,6 +210,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let sense: "normal" | "sert" = "normal";
   let hifz = false;
   let queueOn = false;
+  let lesson: Array<[number, number]> = [];
+  let lessonAt = 0;
+  let drill = false;
+  let passes = 0;
+  let passDirty = false;
   let quietStop = false;
   let playGen = 0;
   try {
@@ -309,6 +315,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     else misses.push({ s, a, w, kind, n: 1, t: Date.now() });
     if (misses.length > 200) misses = misses.slice(-200);
     takeMisses.push({ s, a, w, kind, n: 1, t: Date.now() });
+    passDirty = true;
+    bumpWeek("error");
     saveMisses();
     paintMisses();
     navigator.vibrate?.(50);
@@ -539,7 +547,42 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const pair = pages[page - 1]?.[0];
     if (!pair) return;
     queueOn = false;
+    lesson = [];
+    lessonAt = 0;
+    passes = 0;
+    drill = true;
+    root.querySelector(".t-lesson")?.classList.remove("on");
     void beginRetry({ s: pair[0], a: pair[1], w: -1, kind: "oxu", n: 1, t: Date.now() });
+  });
+  const lessonBtn = need<HTMLButtonElement>(".t-lesson");
+  function pageAyahs(): Array<[number, number]> {
+    const seen = new Set<string>();
+    const out: Array<[number, number]> = [];
+    for (const pair of pages[page - 1] ?? []) {
+      const key = `${pair[0]}:${pair[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push([pair[0], pair[1]]);
+    }
+    return out;
+  }
+  lessonBtn.addEventListener("click", () => {
+    if (lesson.length) {
+      lesson = [];
+      drill = false;
+      lessonBtn.classList.remove("on");
+      if (micOn) void stopMic();
+      return;
+    }
+    const list = pageAyahs();
+    if (!list.length) return;
+    queueOn = false;
+    drill = false;
+    lesson = list;
+    lessonAt = 0;
+    passes = 0;
+    lessonBtn.classList.add("on");
+    void beginRetry({ s: list[0][0], a: list[0][1], w: -1, kind: "ders", n: 1, t: Date.now() });
   });
   const dayAyahs = new Set<string>();
   function todayStamp(): string {
@@ -553,12 +596,57 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     /* ignore */
   }
   function paintToday(): void {
-    todayEl.textContent = `Bu gün ${dayAyahs.size} ayə · ${misses.length} xəta`;
+    const week = weekTotals();
+    todayEl.textContent = `Bu gün ${dayAyahs.size} ayə · ${misses.length} xəta · həftə ${week.ayahs} ayə · ${week.errors} xəta`;
+  }
+  function weekKey(offset = 0): string {
+    const n = new Date();
+    n.setDate(n.getDate() - offset);
+    return `${n.getFullYear()}-${n.getMonth() + 1}-${n.getDate()}`;
+  }
+  function readWeek(): Record<string, { ayahs?: string[]; errors?: number }> {
+    try {
+      const raw = JSON.parse(localStorage.getItem("tartil.week") || "{}") as Record<string, { ayahs?: string[]; errors?: number }>;
+      return raw && typeof raw === "object" ? raw : {};
+    } catch {
+      return {};
+    }
+  }
+  function weekTotals(): { ayahs: number; errors: number } {
+    const week = readWeek();
+    let ayahs = 0;
+    let errors = 0;
+    for (let i = 0; i < 7; i += 1) {
+      const row = week[weekKey(i)];
+      ayahs += row?.ayahs?.length ?? 0;
+      errors += row?.errors ?? 0;
+    }
+    return { ayahs, errors };
+  }
+  function bumpWeek(kind: "ayah" | "error", ayahKey = ""): void {
+    const week = readWeek();
+    const key = weekKey();
+    const row = week[key] ?? { ayahs: [], errors: 0 };
+    if (!Array.isArray(row.ayahs)) row.ayahs = [];
+    if (kind === "ayah" && ayahKey && !row.ayahs.includes(ayahKey)) row.ayahs.push(ayahKey);
+    if (kind === "error") row.errors = (row.errors ?? 0) + 1;
+    week[key] = row;
+    const keep: Record<string, { ayahs?: string[]; errors?: number }> = {};
+    for (let i = 0; i < 7; i += 1) {
+      const day = weekKey(i);
+      if (week[day]) keep[day] = week[day];
+    }
+    try {
+      localStorage.setItem("tartil.week", JSON.stringify(keep));
+    } catch {
+      /* ignore quota */
+    }
   }
   function noteAyah(surah: number, ayah: number): void {
     const key = `${surah}:${ayah}`;
     if (dayAyahs.has(key)) return;
     dayAyahs.add(key);
+    bumpWeek("ayah", key);
     try {
       localStorage.setItem("tartil.day", JSON.stringify({ d: todayStamp(), ayahs: [...dayAyahs] }));
     } catch {
@@ -941,6 +1029,46 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       retryKey = "";
       paintMisses();
       applyShown();
+      if (lesson.length || drill) {
+        const name = AZ[bits[0] - 1] ?? String(bits[0]);
+        const again = (why: string) => {
+          retryKey = `${bits[0]}:${bits[1]}:*`;
+          setStatus(why, `${name} ${bits[1]} — ${passes}/3`);
+          void beginRetry({ s: bits[0], a: bits[1], w: -1, kind: "ders", n: 1, t: Date.now() });
+        };
+        if (passDirty) {
+          passDirty = false;
+          again("Yenidən");
+          return;
+        }
+        passes += 1;
+        if (passes < 3) {
+          again("Təmiz");
+          return;
+        }
+        passes = 0;
+        passDirty = false;
+        if (lesson.length) {
+          lessonAt += 1;
+          if (lessonAt < lesson.length) {
+            const next = lesson[lessonAt];
+            void beginRetry({ s: next[0], a: next[1], w: -1, kind: "ders", n: 1, t: Date.now() });
+            return;
+          }
+          lesson = [];
+          lessonAt = 0;
+          root.querySelector(".t-lesson")?.classList.remove("on");
+          setStatus("Bitdi", "Səhifə dərsi tamamdır.");
+        } else {
+          drill = false;
+          setStatus("Bitdi", `${name} ${bits[1]} üç dəfə təmizdir.`);
+        }
+        retryClose = true;
+        queueMicrotask(() => {
+          if (micOn) void stopMic();
+        });
+        return;
+      }
       if (queueOn) {
         advanceQueue();
         return;
@@ -1308,7 +1436,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const gen = playGen;
     const url = ayahUrl(surah, ayah);
     const name = AZ[surah - 1] ?? String(surah);
-    setStatus("Dinlə", `Mişari əl-Əfasi — ${name} ${ayah}. Sonra təkrar edin.`);
+    const step = (lesson.length || drill) && passes > 0 ? ` ${passes}/3 təmiz.` : "";
+    setStatus("Dinlə", `Yavaş — ${name} ${ayah}.${step} Sonra təkrar edin.`);
     return new Promise((resolve) => {
       const finish = (ok: boolean) => resolve(gen === playGen && ok);
       void (async () => {
@@ -1332,6 +1461,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
           src.buffer = buf;
           src.connect(gain);
           gain.connect(ctx.destination);
+          src.playbackRate.value = 0.75;
           voiceStop = () => src.stop();
           src.onended = () => finish(true);
           src.start();
@@ -1348,6 +1478,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     if (micOn || audioStop) await stopMic();
     quietStop = false;
     queueOn = keepQueue;
+    passDirty = false;
     const ok = await playAyah(m.s, m.a);
     if (!ok || !alive) return;
     retryKey = m.w >= 0 ? `${m.s}:${m.a}:${m.w}` : `${m.s}:${m.a}:*`;
@@ -1660,6 +1791,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     void wake?.release();
     wake = null;
     if (!quietStop) {
+      lesson = [];
+      lessonAt = 0;
+      drill = false;
+      passes = 0;
+      root.querySelector(".t-lesson")?.classList.remove("on");
       if (nHeard || found.length) showSummary(fixed, nHeard, found);
       else setStatus("Oxu", "Mikrofon bağlıdır. Ayələr açıqdır.");
     }

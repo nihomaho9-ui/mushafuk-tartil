@@ -94,6 +94,7 @@
 .t-sense,
 .t-hifz,
 .t-listen,
+.t-lesson,
 .t-micpick {
   flex: none;
   height: 28px;
@@ -106,7 +107,7 @@
   font-weight: 700;
   cursor: pointer;
 }
-.t-hifz.on { background: var(--ink); color: var(--paper); }
+.t-hifz.on, .t-lesson.on { background: var(--ink); color: var(--paper); }
 .t-tools { flex-wrap: wrap; }
 
 .t-surah {
