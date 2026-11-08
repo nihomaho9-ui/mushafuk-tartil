@@ -945,23 +945,11 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         return;
       }
       if (phase === "error" && issue?.surah && issue.ayah) {
-        if (!noteStrike(issue)) {
-          if (!settling) {
-            settling = true;
-            try {
-              releaseIssue(issue);
-            } finally {
-              settling = false;
-            }
-          }
-          return;
-        }
-        remember(issue);
-        holdAyah(issue.surah, issue.ayah);
+        if (noteStrike(issue)) remember(issue);
         if (!settling) {
           settling = true;
           try {
-            session?.zipformer?.correct("retry");
+            releaseIssue(issue);
           } finally {
             settling = false;
           }
@@ -1078,7 +1066,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     session = created;
     if (created.zipformer) {
-      await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "pause" });
+      await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "stop" });
       created.zipformer.setSlipHead(sense === "sert" ? "high" : "strict");
       created.zipformer.setMode("correction");
     }
@@ -1317,7 +1305,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       setStatus("Dinləyirəm", "Ayələr gizləndi. Nömrələr qalır. Təsdiqlənən söz açılır.");
     }
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      audio: {
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
     });
     if (!micOn) {
       stream.getTracks().forEach((t) => t.stop());
@@ -1361,7 +1354,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const raw = ev.inputBuffer.getChannelData(0);
       setLevel(raw);
       const next = resample(raw, ctx.sampleRate);
-      if (pending.length > 16000) pending = pending.slice(pending.length - 8000);
+      if (pending.length > 16000 * 15) pending = pending.slice(pending.length - 16000 * 12);
       const merged = new Float32Array(pending.length + next.length);
       merged.set(pending, 0);
       merged.set(next, pending.length);

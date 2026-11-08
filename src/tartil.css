@@ -289,6 +289,12 @@
 }
 .tartil.hifz.mic .shead img { visibility: hidden; }
 .tartil.hifz.mic .w.num { color: var(--ink); }
+.tartil.hifz.mic .w.on,
+.tartil.hifz.mic .basmala.on,
+.tartil.hifz.mic .w.fresh {
+  color: var(--ink);
+}
+.tartil.hifz.mic .w.fresh { background: var(--fresh); }
 .tartil.hifz.mic .w.cue {
   box-shadow: inset 0 -0.28em 0 var(--ink);
 }
