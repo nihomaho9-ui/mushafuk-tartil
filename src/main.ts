@@ -133,7 +133,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         <input class="t-pageno" inputmode="numeric" aria-label="Səhifə" />
         <button type="button" data-dir="1" aria-label="Növbəti səhifə">›</button>
       </div>
-      <select class="t-surah" aria-label="Surə"></select>
+      <label class="t-ico t-surah-btn" aria-label="Surə">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 0-3 3V4z"/><path d="M5 4a3 3 0 0 0-3 3v13"/></svg>
+        <select class="t-surah" aria-label="Surə"></select>
+      </label>
       <button type="button" class="t-missbtn" aria-expanded="false" aria-label="Xətalar">0</button>
       <button type="button" class="t-theme" aria-label="Rəng: krem"></button>
       <button type="button" class="t-more" aria-expanded="false" aria-label="Alətlər">
@@ -141,22 +144,24 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       </button>
     </header>
     <div class="t-tools" hidden>
-      <span class="t-today">Bu gün 0 ayə · 0 xəta</span>
-      <button type="button" class="t-speed" aria-label="Sürət">orta</button>
-      <button type="button" class="t-sense" aria-label="Həssaslıq">normal</button>
-      <button type="button" class="t-hifz" aria-pressed="false">Hifz</button>
-      <button type="button" class="t-listen">Dinlə</button>
-      <button type="button" class="t-lesson">Dərs</button>
-      <button type="button" class="t-mine" hidden>Səsim</button>
-      <button type="button" class="t-back" hidden>Son</button>
-      <select class="t-micpick" aria-label="Mikrofon" hidden></select>
+      <button type="button" class="t-ico t-today" aria-label="Bu gün"></button>
+      <button type="button" class="t-ico t-speed" aria-label="Sürət"></button>
+      <button type="button" class="t-ico t-sense" aria-label="Həssaslıq"></button>
+      <button type="button" class="t-ico t-hifz" aria-pressed="false" aria-label="Hifz"></button>
+      <button type="button" class="t-ico t-listen" aria-label="Dinlə"></button>
+      <button type="button" class="t-ico t-lesson" aria-label="Dərs"></button>
+      <button type="button" class="t-ico t-mine" aria-label="Səsim" hidden></button>
+      <button type="button" class="t-ico t-back" aria-label="Son səhifə" hidden></button>
+      <label class="t-ico t-micbtn" aria-label="Mikrofon" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zM5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        <select class="t-micpick" aria-label="Mikrofon"></select>
+      </label>
     </div>
     <div class="t-range" hidden>
-      <b class="t-range-name">Dərs</b>
       <select class="t-from" aria-label="Başlanğıc ayə"></select>
       <span>–</span>
       <select class="t-to" aria-label="Son ayə"></select>
-      <button type="button" class="t-range-go">Başla</button>
+      <button type="button" class="t-ico t-range-go" aria-label="Başla"></button>
     </div>
     <main class="t-page" dir="rtl"></main>
     <p class="t-foot">Tanıma telefonun özündə işləyir. Model və lüğət NPL-1.2 — yalnız qeyri-kommersiya.</p>
@@ -456,6 +461,20 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
     moreBtn.classList.toggle("on", open);
   });
+  const icon = (cls: string, body: string) => {
+    const el = root.querySelector(cls);
+    if (el && !el.querySelector("svg")) el.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`);
+  };
+  icon(".t-today", `<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>`);
+  icon(".t-speed", `<path d="M13 3L5 14h7l-1 7 8-11h-7l1-7z"/>`);
+  icon(".t-sense", `<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/>`);
+  icon(".t-hifz", `<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/>`);
+  icon(".t-listen", `<path d="M8 5v14l11-7L8 5z"/>`);
+  icon(".t-lesson", `<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 0-3 3V4z"/>`);
+  icon(".t-mine", `<path d="M4 12h2l2-5 3 10 2-5h7"/>`);
+  icon(".t-back", `<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>`);
+  icon(".t-range-go", `<path d="M8 5v14l11-7L8 5z"/>`);
+  todayEl.addEventListener("click", () => setStatus("Hesab", todayEl.getAttribute("aria-label") || ""));
   const speedBtn = need<HTMLButtonElement>(".t-speed");
   let pace: "tez" | "orta" = "orta";
   try {
@@ -474,7 +493,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       delayStep = 30;
       delayCap = 120;
     }
-    speedBtn.textContent = name;
+    speedBtn.classList.toggle("on", name === "tez");
     speedBtn.setAttribute("aria-label", name === "tez" ? "Sürət: tez" : "Sürət: orta");
     try {
       localStorage.setItem("tartil.speed", name);
@@ -488,7 +507,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   const hifzBtn = need<HTMLButtonElement>(".t-hifz");
   function applySense(name: "normal" | "sert"): void {
     sense = name;
-    senseBtn.textContent = name === "sert" ? "sərt" : "normal";
+    senseBtn.classList.toggle("on", name === "sert");
     senseBtn.setAttribute("aria-label", name === "sert" ? "Həssaslıq: sərt" : "Həssaslıq: normal");
     session?.zipformer?.setSlipHead(name === "sert" ? "high" : "strict");
     try {
@@ -537,7 +556,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     });
     const keep = savedMic();
     if ([...micPick.options].some((opt) => opt.value === keep)) micPick.value = keep;
-    micPick.hidden = found.length < 2;
+    micPick.closest<HTMLElement>(".t-micbtn")?.toggleAttribute("hidden", found.length < 2);
   }
   micPick.addEventListener("change", () => {
     try {
@@ -564,7 +583,6 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   const rangeBox = need<HTMLElement>(".t-range");
   const fromSel = need<HTMLSelectElement>(".t-from");
   const toSel = need<HTMLSelectElement>(".t-to");
-  const rangeName = need<HTMLElement>(".t-range-name");
   function pageAyahs(): Array<[number, number]> {
     const seen = new Set<string>();
     const out: Array<[number, number]> = [];
@@ -581,7 +599,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const surah = here[0]?.[0] || Number(surahSel.value) || 1;
     const total = words?.ayahs[surah - 1]?.length || 1;
     const name = AZ[surah - 1] ?? String(surah);
-    rangeName.textContent = name;
+    fromSel.setAttribute("aria-label", `${name}, başlanğıc`);
+    toSel.setAttribute("aria-label", `${name}, son`);
     fromSel.replaceChildren();
     toSel.replaceChildren();
     for (let a = 1; a <= total; a += 1) {
@@ -704,7 +723,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   function paintToday(): void {
     const week = weekTotals();
-    todayEl.textContent = `Bu gün ${dayAyahs.size} ayə · ${misses.length} xəta · həftə ${week.ayahs} ayə · ${week.errors} xəta`;
+    todayEl.setAttribute("aria-label", `Bu gün ${dayAyahs.size} ayə, ${misses.length} xəta. Həftə ${week.ayahs} ayə, ${week.errors} xəta`);
   }
   function weekKey(offset = 0): string {
     const n = new Date();
