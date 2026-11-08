@@ -846,6 +846,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const target = pageOf.get(`${surah}:${ayah}`);
       if (target && target !== page) {
         page = target;
+        expectPage();
         if (!retryHit(key)) {
           render();
           return;
@@ -984,7 +985,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const idxs = new Set<number>(msg.matched_indices ?? []);
     for (let i = 0; i <= upto; i += 1) idxs.add(i);
     if (!idxs.size) return;
-    if (surah) expectSurah(surah);
+    if (surah) expectPage();
     schedule(surah, ayah, [...idxs]);
   }
 
@@ -1049,6 +1050,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         ort,
         model,
         corpus,
+        stayOnSurah: true,
+        config: { outsideJumpCost: 18 },
         onEvent: (msg: unknown) => {
           if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
         },
@@ -1059,6 +1062,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         ort,
         model,
         corpus,
+        stayOnSurah: true,
+        config: { outsideJumpCost: 18 },
         onEvent: (msg: unknown) => {
           if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
         },
@@ -1090,11 +1095,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     return out;
   }
 
-  function expectSurah(surah: number): void {
-    if (retryKey || !session?.zipformer || !words || expectedSurah === surah) return;
-    expectedSurah = surah;
-    const total = words.ayahs[surah - 1]?.length ?? 1;
-    session.zipformer.setExpected({ surah, ayah: 1, ayahEnd: total });
+  let expectedKey = "";
+  function expectPage(): void {
+    if (retryKey || !session?.zipformer || !words) return;
+    const onPage = pages[page - 1]?.[0];
+    if (!onPage) return;
+    const total = words.ayahs[onPage[0] - 1]?.length ?? onPage[1];
+    const key = `${onPage[0]}:${onPage[1]}:${total}`;
+    if (expectedKey === key) return;
+    expectedKey = key;
+    session.zipformer.setExpected({ surah: onPage[0], ayah: onPage[1], ayahEnd: total });
   }
 
   function retryHit(key: string): boolean {
@@ -1279,14 +1289,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     rearm = false;
     sumBox.hidden = true;
     expectedSurah = 0;
+    expectedKey = "";
     const retrying = Boolean(retryKey);
     if (retrying) {
       const [s, a] = retryKey.split(":").map(Number);
       engine.zipformer?.setExpected({ surah: s, ayah: a, ayahEnd: a });
+      expectedKey = `${s}:${a}:${a}`;
       expectedSurah = s;
     } else {
       const here = pages[page - 1]?.[0]?.[0];
-      if (here) expectSurah(here);
+      if (here) expectPage();
     }
     micOn = true;
     root.classList.toggle("mic", !retrying);
@@ -1331,7 +1343,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     let pending = new Float32Array(0);
     let feeding = false;
     let feedDone: (() => void) | null = null;
-    const chunkSize = 4800;
+    const chunkSize = 7680;
     const pump = () => {
       if (!micOn || feeding || pending.length < chunkSize) {
         if (!feeding && !micOn) feedDone?.();
@@ -1346,7 +1358,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
           feedDone?.();
           return;
         }
-        window.setTimeout(pump, 0);
+        pump();
       });
     };
     proc.onaudioprocess = (ev) => {
