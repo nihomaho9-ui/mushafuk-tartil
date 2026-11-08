@@ -209,7 +209,6 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let queueOn = false;
   let quietStop = false;
   let playGen = 0;
-  let clip: HTMLAudioElement | null = null;
   try {
     const saved = JSON.parse(localStorage.getItem(MISS_KEY) || "[]") as Miss[];
     if (Array.isArray(saved)) misses = saved.filter((m) => m && m.s && m.a);
@@ -758,6 +757,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     const ahead = n + 1;
     if (ahead <= 604) void loadPageFont(ahead).catch(() => undefined);
+    prefetchPage(n);
   }
 
   function clearTimers(): void {
@@ -1051,7 +1051,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         model,
         corpus,
         stayOnSurah: true,
-        config: { outsideJumpCost: 18 },
+        config: { outsideJumpCost: 24, commitDwell: 4, backfillRatio: 2 },
         onEvent: (msg: unknown) => {
           if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
         },
@@ -1063,7 +1063,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         model,
         corpus,
         stayOnSurah: true,
-        config: { outsideJumpCost: 18 },
+        config: { outsideJumpCost: 24, commitDwell: 4, backfillRatio: 2 },
         onEvent: (msg: unknown) => {
           if (msg && typeof msg === "object" && "type" in msg) onEvent(msg as ProgressMsg);
         },
@@ -1168,53 +1168,81 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   document.addEventListener("visibilitychange", onVisible);
 
+  let voice: AudioContext | null = null;
+  let voiceStop: (() => void) | null = null;
+
+  function ayahUrl(surah: number, ayah: number): string {
+    const file = `${String(surah).padStart(3, "0")}${String(ayah).padStart(3, "0")}.mp3`;
+    return `https://verses.quran.com/Alafasy/mp3/${file}`;
+  }
+
+  async function loadAyah(url: string): Promise<ArrayBuffer | null> {
+    const cache = "caches" in window ? await caches.open("tartil-audio") : null;
+    let hit = cache ? await cache.match(url) : undefined;
+    if (!hit) {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      if (cache) await cache.put(url, res.clone());
+      hit = res;
+    }
+    return hit.arrayBuffer();
+  }
+
+  function prefetchPage(n: number): void {
+    const seen = new Set<string>();
+    for (const pair of pages[n - 1] ?? []) {
+      const key = `${pair[0]}:${pair[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      void loadAyah(ayahUrl(pair[0], pair[1])).catch(() => undefined);
+    }
+  }
+
   function stopClip(): void {
     playGen += 1;
-    if (!clip) return;
-    clip.pause();
-    clip.src = "";
-    clip = null;
+    try {
+      voiceStop?.();
+    } catch {
+      /* already stopped */
+    }
+    voiceStop = null;
   }
 
   function playAyah(surah: number, ayah: number): Promise<boolean> {
     stopClip();
     const gen = playGen;
-    const file = `${String(surah).padStart(3, "0")}${String(ayah).padStart(3, "0")}.mp3`;
-    const url = `https://verses.quran.com/Alafasy/mp3/${file}`;
+    const url = ayahUrl(surah, ayah);
     const name = AZ[surah - 1] ?? String(surah);
     setStatus("Dinlə", `Mişari əl-Əfasi — ${name} ${ayah}. Sonra təkrar edin.`);
     return new Promise((resolve) => {
       const finish = (ok: boolean) => resolve(gen === playGen && ok);
       void (async () => {
-        let src = url;
         try {
-          const cache = "caches" in window ? await caches.open("tartil-audio") : null;
-          let hit = cache ? await cache.match(url) : undefined;
-          if (!hit) {
-            const res = await fetch(url);
-            if (res.ok && cache) {
-              await cache.put(url, res.clone());
-              hit = res;
-            }
+          const raw = await loadAyah(url);
+          if (!raw || gen !== playGen) {
+            finish(false);
+            return;
           }
-          if (hit) src = URL.createObjectURL(await hit.blob());
+          const ctx = voice ?? new AudioContext();
+          voice = ctx;
+          await ctx.resume();
+          const buf = await ctx.decodeAudioData(raw.slice(0));
+          if (gen !== playGen) {
+            finish(false);
+            return;
+          }
+          const src = ctx.createBufferSource();
+          const gain = ctx.createGain();
+          gain.gain.value = 1.45;
+          src.buffer = buf;
+          src.connect(gain);
+          gain.connect(ctx.destination);
+          voiceStop = () => src.stop();
+          src.onended = () => finish(true);
+          src.start();
         } catch {
-          src = url;
-        }
-        if (gen !== playGen) {
-          if (src.startsWith("blob:")) URL.revokeObjectURL(src);
-          finish(false);
-          return;
-        }
-        const el = new Audio(src);
-        clip = el;
-        const done = () => {
-          if (src.startsWith("blob:")) URL.revokeObjectURL(src);
           finish(true);
-        };
-        el.addEventListener("ended", done, { once: true });
-        el.addEventListener("error", done, { once: true });
-        void el.play().catch(done);
+        }
       })();
     });
   }
@@ -1337,13 +1365,26 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       return;
     }
     const source = ctx.createMediaStreamSource(stream);
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
     const gain = ctx.createGain();
     gain.gain.value = 0;
     let pending = new Float32Array(0);
     let feeding = false;
     let feedDone: (() => void) | null = null;
     const chunkSize = 7680;
+    const lift = (samples: Float32Array): Float32Array => {
+      let acc = 0;
+      const step = 8;
+      for (let i = 0; i < samples.length; i += step) acc += samples[i] * samples[i];
+      const rms = Math.sqrt(acc / Math.max(1, Math.ceil(samples.length / step)));
+      if (rms < 0.004 || rms > 0.08) return samples;
+      const g = Math.min(3.5, 0.045 / rms);
+      const out = new Float32Array(samples.length);
+      for (let i = 0; i < samples.length; i += 1) {
+        const v = samples[i] * g;
+        out[i] = v > 1 ? 1 : v < -1 ? -1 : v;
+      }
+      return out;
+    };
     const pump = () => {
       if (!micOn || feeding || pending.length < chunkSize) {
         if (!feeding && !micOn) feedDone?.();
@@ -1352,7 +1393,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const slice = pending.slice(0, chunkSize);
       pending = pending.slice(chunkSize);
       feeding = true;
-      void engine.feed(slice).catch(() => undefined).then(() => {
+      void engine.feed(lift(slice)).catch(() => undefined).then(() => {
         feeding = false;
         if (!micOn) {
           feedDone?.();
@@ -1361,11 +1402,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         pump();
       });
     };
-    proc.onaudioprocess = (ev) => {
-      if (!micOn) return;
-      const raw = ev.inputBuffer.getChannelData(0);
-      setLevel(raw);
-      const next = resample(raw, ctx.sampleRate);
+    const pushPcm = (next: Float32Array) => {
+      if (!micOn || !next.length) return;
       if (pending.length > 16000 * 15) pending = pending.slice(pending.length - 16000 * 12);
       const merged = new Float32Array(pending.length + next.length);
       merged.set(pending, 0);
@@ -1373,13 +1411,41 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       pending = merged;
       if (!feeding) pump();
     };
-    source.connect(proc);
-    proc.connect(gain);
+    let proc: ScriptProcessorNode | null = null;
+    let tap: AudioWorkletNode | null = null;
+    try {
+      await ctx.audioWorklet.addModule(asset("mic-worklet.js"));
+      if (!micOn) {
+        stream.getTracks().forEach((t) => t.stop());
+        void ctx.close();
+        return;
+      }
+      tap = new AudioWorkletNode(ctx, "mic-tap");
+      tap.port.onmessage = (ev: MessageEvent<Float32Array>) => {
+        if (!micOn) return;
+        const chunk = ev.data;
+        setLevel(chunk);
+        pushPcm(chunk);
+      };
+      source.connect(tap);
+      tap.connect(gain);
+    } catch {
+      proc = ctx.createScriptProcessor(4096, 1, 1);
+      proc.onaudioprocess = (ev) => {
+        if (!micOn) return;
+        const raw = ev.inputBuffer.getChannelData(0);
+        setLevel(raw);
+        pushPcm(resample(raw, ctx.sampleRate));
+      };
+      source.connect(proc);
+      proc.connect(gain);
+    }
     gain.connect(ctx.destination);
     audioStop = async () => {
-      proc.onaudioprocess = null;
+      if (proc) proc.onaudioprocess = null;
       try {
-        proc.disconnect();
+        proc?.disconnect();
+        tap?.disconnect();
         source.disconnect();
         gain.disconnect();
       } catch {
