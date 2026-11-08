@@ -50,28 +50,31 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 6px 8px;
   background: var(--paper);
   border-bottom: 1px solid var(--line);
+  direction: ltr;
 }
 
-.t-brand {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.05;
-  min-width: 72px;
+.t-more,
+.t-theme,
+.t-missbtn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--chip);
+  padding: 0;
+  display: grid;
+  place-items: center;
 }
-
-.t-brand b {
-  font-size: 15px;
-  letter-spacing: 0.14em;
-  font-weight: 700;
-}
-.t-brand span {
-  font-size: 11px;
-  color: var(--muted);
-}
+.t-more svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.t-more.on { background: var(--ink); color: var(--paper); }
+.t-missbtn { font-size: 12px; font-weight: 700; }
+.t-tools[hidden],
+.t-range[hidden] { display: none; }
 
 .t-tools {
   flex: none;
@@ -81,6 +84,8 @@
   padding: 4px 12px 6px;
   background: var(--paper);
   border-bottom: 1px solid var(--line);
+  direction: ltr;
+  flex-wrap: wrap;
 }
 .t-today {
   flex: 1;
@@ -89,7 +94,6 @@
   font-size: 12px;
   text-align: right;
 }
-.t-size,
 .t-speed,
 .t-sense,
 .t-hifz,
@@ -131,10 +135,12 @@
 }
 .t-tools { flex-wrap: wrap; }
 
+.t-range { direction: ltr; }
+
 .t-surah {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  height: 32px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--chip);
@@ -148,8 +154,8 @@
 }
 
 .t-pager button {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--chip);
@@ -157,8 +163,8 @@
 }
 
 .t-pager input {
-  width: 58px;
-  height: 36px;
+  width: 44px;
+  height: 32px;
   text-align: center;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -245,10 +251,6 @@
   border: 1px solid #e2c2b4;
   background: var(--chip);
   color: #7a3b2e;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 13px;
-  font-weight: 700;
   cursor: pointer;
 }
 .tartil.theme-black .t-missbtn { color: #f0b4a8; border-color: #6a3a32; }

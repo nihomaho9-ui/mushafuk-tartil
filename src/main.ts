@@ -128,19 +128,20 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   root.className = "tartil";
   root.innerHTML = `
     <header class="t-top">
-      <div class="t-brand"><b>TARTIL</b><span>oxu izləmə</span></div>
-      <button type="button" class="t-theme" aria-label="Rəng: krem"></button>
-      <button type="button" class="t-missbtn" aria-expanded="false">Xəta 0</button>
-      <select class="t-surah" aria-label="Surə"></select>
       <div class="t-pager">
         <button type="button" data-dir="-1" aria-label="Əvvəlki səhifə">‹</button>
         <input class="t-pageno" inputmode="numeric" aria-label="Səhifə" />
         <button type="button" data-dir="1" aria-label="Növbəti səhifə">›</button>
       </div>
+      <select class="t-surah" aria-label="Surə"></select>
+      <button type="button" class="t-missbtn" aria-expanded="false" aria-label="Xətalar">0</button>
+      <button type="button" class="t-theme" aria-label="Rəng: krem"></button>
+      <button type="button" class="t-more" aria-expanded="false" aria-label="Alətlər">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
     </header>
-    <div class="t-tools">
+    <div class="t-tools" hidden>
       <span class="t-today">Bu gün 0 ayə · 0 xəta</span>
-      <button type="button" class="t-size" aria-label="Yazı ölçüsü">Aa</button>
       <button type="button" class="t-speed" aria-label="Sürət">orta</button>
       <button type="button" class="t-sense" aria-label="Həssaslıq">normal</button>
       <button type="button" class="t-hifz" aria-pressed="false">Hifz</button>
@@ -291,7 +292,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       else if (warns.has(key)) el.classList.add("warn");
     });
     const total = misses.reduce((n, m) => n + (m.n || 1), 0);
-    missBtn.textContent = `Xəta ${total}`;
+    missBtn.textContent = String(total);
+    missBtn.setAttribute("aria-label", `Xəta ${total}`);
     paintToday();
     missList.replaceChildren();
     if (!misses.length) {
@@ -445,27 +447,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     applyTheme(themes[(themes.indexOf(theme) + 1) % themes.length]);
   });
   const todayEl = need<HTMLElement>(".t-today");
-  const sizeBtn = need<HTMLButtonElement>(".t-size");
+  const tools = need<HTMLElement>(".t-tools");
+  const moreBtn = need<HTMLButtonElement>(".t-more");
+  moreBtn.addEventListener("click", () => {
+    const open = tools.hidden;
+    tools.hidden = !open;
+    if (!open) rangeBox.hidden = true;
+    moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    moreBtn.classList.toggle("on", open);
+  });
   const speedBtn = need<HTMLButtonElement>(".t-speed");
-  let textScale = 1;
-  try {
-    if (localStorage.getItem("tartil.size") === "boyuk") textScale = 1.28;
-  } catch {
-    /* ignore */
-  }
-  function applySize(big: boolean): void {
-    textScale = big ? 1.28 : 1;
-    sizeBtn.textContent = big ? "A+" : "Aa";
-    sizeBtn.setAttribute("aria-label", big ? "Yazı böyük" : "Yazı kiçik");
-    try {
-      localStorage.setItem("tartil.size", big ? "boyuk" : "kicik");
-    } catch {
-      /* ignore quota */
-    }
-    fit();
-  }
-  sizeBtn.addEventListener("click", () => applySize(textScale === 1));
-  applySize(textScale > 1);
   let pace: "tez" | "orta" = "orta";
   try {
     if (localStorage.getItem("tartil.speed") === "tez") pace = "tez";
@@ -836,8 +827,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       size *= (w / widest) * 0.94;
     }
     const phone = matchMedia("(max-width: 520px)").matches;
-    pageEl.style.fontSize = `${size * (phone ? 1 : 0.92) * textScale}px`;
-    pageEl.style.overflowY = textScale > 1 ? "auto" : "hidden";
+    pageEl.style.fontSize = `${size * (phone ? 1 : 0.92)}px`;
+    pageEl.style.overflowY = "hidden";
     let ink = 0;
     pageEl.querySelectorAll<HTMLElement>(".line:not(.surah):not(.basmala)").forEach((line) => {
       ink = Math.max(ink, textWidth(line));
@@ -1118,6 +1109,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       const total = wordList(surah, ayah).length;
       const idx = Number(parts[2]);
       if (idx === total - 1) {
+        if (surah === seqS && ayah === seqA) seqDone = true;
         noteAyah(surah, ayah);
         shown.add(`num:${surah}:${ayah}`);
         const prefix = `${surah}:${ayah}:`;
@@ -1212,8 +1204,38 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     if (retryKey) markRetry();
   }
 
+  let seqS = 0;
+  let seqA = 0;
+  let seqDone = false;
+  let seqHold = false;
+  function seqOk(surah: number, ayah: number): boolean {
+    if (retryKey) return true;
+    if (!seqA) {
+      const here = pages[page - 1]?.[0];
+      seqS = here?.[0] ?? surah;
+      seqA = here?.[1] ?? ayah;
+      seqDone = false;
+    }
+    if (surah === seqS && ayah <= seqA) return true;
+    const follows = (surah === seqS && ayah === seqA + 1) || (surah === seqS + 1 && ayah === 1);
+    if (follows && seqDone) {
+      seqS = surah;
+      seqA = ayah;
+      seqDone = false;
+      seqHold = false;
+      return true;
+    }
+    if (!seqHold) {
+      seqHold = true;
+      const name = AZ[seqS - 1] ?? String(seqS);
+      setStatus("Buraxıldı", `${name} ${seqA} bitməyib. Növbəti ayə açılmır.`);
+    }
+    return false;
+  }
+
   function schedule(surah: number, ayah: number, indices: number[]): void {
     if (surah === 1 && ayah === 1 && pageOf.get("1:1") !== page) return;
+    if (!seqOk(surah, ayah)) return;
     if (ayahLock) {
       const [ls, la] = ayahLock.split(":").map(Number);
       if (surah > ls || (surah === ls && ayah > la)) return;
@@ -1684,6 +1706,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       if (here) expectPage();
     }
     micOn = true;
+    seqS = 0;
+    seqA = 0;
+    seqDone = false;
+    seqHold = false;
     voiceChunks.length = 0;
     voiceSamples = 0;
     captureOn = true;
