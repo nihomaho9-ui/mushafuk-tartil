@@ -92,12 +92,15 @@
 .t-size,
 .t-speed,
 .t-sense,
-.t-hifz {
+.t-hifz,
+.t-listen,
+.t-micpick {
   flex: none;
   height: 28px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--chip);
+  color: var(--ink);
   padding: 0 10px;
   font-size: 12px;
   font-weight: 700;

@@ -9,15 +9,21 @@ class MicTap extends AudioWorkletProcessor {
     this.hp = Math.exp((-2 * Math.PI * 80) / 16000);
     this.env = 0.0002;
     this.gain = 1;
+    this.energy = 0;
     this.buf = new Float32Array(7680);
     this.n = 0;
     this.lpA = 1 - Math.exp((-2 * Math.PI * 7400) / sampleRate);
+    this.port.onmessage = (ev) => {
+      const room = ev.data && ev.data.room;
+      if (typeof room === "number" && room >= 1 && room <= 18) this.gain = room;
+    };
   }
 
   push(x) {
     const y = this.hp * (this.y1 + x - this.x1);
     this.x1 = x;
     this.y1 = y;
+    this.energy += y * y;
     this.env = this.env * 0.9992 + y * y * 0.0008;
     const rms = Math.sqrt(this.env);
     const target = rms > 0.0011 ? Math.min(18, 0.12 / rms) : 1;
@@ -27,9 +33,11 @@ class MicTap extends AudioWorkletProcessor {
     this.n += 1;
     if (this.n === this.buf.length) {
       const out = this.buf;
+      const rms = Math.sqrt(this.energy / this.buf.length);
       this.buf = new Float32Array(7680);
       this.n = 0;
-      this.port.postMessage(out, [out.buffer]);
+      this.energy = 0;
+      this.port.postMessage({ rms, pcm: out }, [out.buffer]);
     }
   }
 

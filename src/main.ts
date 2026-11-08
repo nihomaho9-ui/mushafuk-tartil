@@ -144,6 +144,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       <button type="button" class="t-speed" aria-label="Sürət">orta</button>
       <button type="button" class="t-sense" aria-label="Həssaslıq">normal</button>
       <button type="button" class="t-hifz" aria-pressed="false">Hifz</button>
+      <button type="button" class="t-listen">Dinlə</button>
+      <select class="t-micpick" aria-label="Mikrofon" hidden></select>
     </div>
     <main class="t-page" dir="rtl"></main>
     <p class="t-foot">Tanıma telefonun özündə işləyir. Model və lüğət NPL-1.2 — yalnız qeyri-kommersiya.</p>
@@ -498,6 +500,47 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   hifzBtn.addEventListener("click", () => applyHifz(!hifz));
   applyHifz(hifz);
+  const listenBtn = need<HTMLButtonElement>(".t-listen");
+  const micPick = need<HTMLSelectElement>(".t-micpick");
+  function savedMic(): string {
+    try {
+      return localStorage.getItem("tartil.mic") || "";
+    } catch {
+      return "";
+    }
+  }
+  async function listMics(): Promise<void> {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const found = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+    micPick.replaceChildren();
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "Mikrofon";
+    micPick.appendChild(auto);
+    found.forEach((d, i) => {
+      const opt = document.createElement("option");
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Mikrofon ${i + 1}`;
+      micPick.appendChild(opt);
+    });
+    const keep = savedMic();
+    if ([...micPick.options].some((opt) => opt.value === keep)) micPick.value = keep;
+    micPick.hidden = found.length < 2;
+  }
+  micPick.addEventListener("change", () => {
+    try {
+      localStorage.setItem("tartil.mic", micPick.value);
+    } catch {
+      /* ignore quota */
+    }
+  });
+  void listMics();
+  listenBtn.addEventListener("click", () => {
+    const pair = pages[page - 1]?.[0];
+    if (!pair) return;
+    queueOn = false;
+    void beginRetry({ s: pair[0], a: pair[1], w: -1, kind: "oxu", n: 1, t: Date.now() });
+  });
   const dayAyahs = new Set<string>();
   function todayStamp(): string {
     const n = new Date();
@@ -525,9 +568,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }
   paintToday();
 
+  let liveSub = "Mikrofonu açın: ayələr gizlənir, model təsdiqləyəndə açılır.";
+  let quietOn = false;
   function setStatus(title: string, detail: string): void {
     st.textContent = title;
-    sub.textContent = detail;
+    liveSub = detail;
+    if (!quietOn) sub.textContent = detail;
   }
 
   function setProgress(p: number | null): void {
@@ -1152,7 +1198,56 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const step = 8;
     for (let i = 0; i < raw.length; i += step) acc += raw[i] * raw[i];
     const rms = Math.sqrt(acc / Math.max(1, Math.ceil(raw.length / step)));
-    levelFill.style.width = `${Math.min(100, Math.round(rms * 450))}%`;
+    watchLevel(rms);
+  }
+
+  let tapGain: ((room: number) => void) | null = null;
+  let calUntil = 0;
+  let calSum = 0;
+  let calN = 0;
+  let calDone = false;
+  let quietSince = 0;
+  function watchLevel(rms: number): void {
+    levelFill.style.width = `${Math.min(100, Math.round(rms * 900))}%`;
+    const now = performance.now();
+    if (!calDone) {
+      if (!calUntil) calUntil = now + 2000;
+      calSum += rms;
+      calN += 1;
+      if (now < calUntil) return;
+      calDone = true;
+      const avg = calSum / Math.max(1, calN);
+      if (avg < 0.012) {
+        quietOn = true;
+        sub.textContent = "Yaxınlaş. Səs zəifdir, telefonu yaxın tutun.";
+      } else {
+        const room = Math.min(12, Math.max(1, 0.08 / avg));
+        try {
+          localStorage.setItem("tartil.gain", room.toFixed(2));
+        } catch {
+          /* ignore quota */
+        }
+        tapGain?.(room);
+        quietOn = false;
+        if (!retryKey) {
+          liveSub = "Səs kifayətdir. Oxuyun.";
+          sub.textContent = liveSub;
+        }
+      }
+    }
+    if (rms < 0.008) {
+      if (!quietSince) quietSince = now;
+      if (!quietOn && now - quietSince > 1500) {
+        quietOn = true;
+        sub.textContent = "Səs gəlmir. Telefonu yaxınlaşdırın.";
+      }
+      return;
+    }
+    quietSince = 0;
+    if (quietOn && calDone) {
+      quietOn = false;
+      sub.textContent = liveSub;
+    }
   }
 
   async function lockWake(): Promise<void> {
@@ -1329,6 +1424,12 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       if (here) expectPage();
     }
     micOn = true;
+    calUntil = 0;
+    calSum = 0;
+    calN = 0;
+    calDone = false;
+    quietSince = 0;
+    quietOn = false;
     root.classList.toggle("mic", !retrying);
     root.classList.toggle("retry", retrying);
     micBtn.setAttribute("aria-pressed", "true");
@@ -1344,24 +1445,33 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     } else {
       setStatus("Dinləyirəm", "Ayələr gizləndi. Nömrələr qalır. Təsdiqlənən söz açılır.");
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: { ideal: 1 },
-        sampleRate: { ideal: 16000 },
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        googEchoCancellation: false,
-        googEchoCancellation2: false,
-        googDAEchoCancellation: false,
-        googNoiseSuppression: false,
-        googNoiseSuppression2: false,
-        googAutoGainControl: false,
-        googAutoGainControl2: false,
-        googHighpassFilter: false,
-        googTypingNoiseDetection: false,
-      } as MediaTrackConstraints,
-    });
+    const micId = micPick.value;
+    const audio = {
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 16000 },
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      googEchoCancellation: false,
+      googEchoCancellation2: false,
+      googDAEchoCancellation: false,
+      googNoiseSuppression: false,
+      googNoiseSuppression2: false,
+      googAutoGainControl: false,
+      googAutoGainControl2: false,
+      googHighpassFilter: false,
+      googTypingNoiseDetection: false,
+      ...(micId ? { deviceId: { exact: micId } } : {}),
+    } as MediaTrackConstraints;
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio });
+    } catch (err) {
+      if (!micId) throw err;
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { ...audio, deviceId: undefined } as MediaTrackConstraints,
+      });
+    }
     if (!micOn) {
       stream.getTracks().forEach((t) => t.stop());
       return;
@@ -1435,14 +1545,21 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         return;
       }
       tap = new AudioWorkletNode(ctx, "mic-tap");
-      tap.port.onmessage = (ev: MessageEvent<Float32Array>) => {
+      tapGain = (room) => tap?.port.postMessage({ room });
+      const savedGain = Number(localStorage.getItem("tartil.gain") || "1");
+      if (savedGain > 1) tap.port.postMessage({ room: savedGain });
+      tap.port.onmessage = (ev: MessageEvent<Float32Array | { rms?: number; pcm?: Float32Array }>) => {
         if (!micOn) return;
-        const chunk = ev.data;
-        setLevel(chunk);
+        const data = ev.data;
+        const chunk = data instanceof Float32Array ? data : data.pcm;
+        if (!chunk) return;
+        if (data instanceof Float32Array) setLevel(chunk);
+        else if (typeof data.rms === "number") watchLevel(data.rms);
         pushPcm(chunk);
       };
       source.connect(tap);
       tap.connect(gain);
+      void listMics();
     } catch {
       proc = ctx.createScriptProcessor(4096, 1, 1);
       let fbEnv = 0.0002;
