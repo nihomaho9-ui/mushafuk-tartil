@@ -35,10 +35,12 @@ type FeedSession = {
     setStructural: (opts: { ayahOrder?: boolean; similarVerse?: boolean; timing?: "stop" | "pause" }) => Promise<void>;
     setSlipHead: (mode: false | "strict" | "high") => void;
     correct: (action: "review_later" | "retry" | "continue") => unknown;
+    verdicts: () => Verdict[];
     correction: { state: { phase?: string }; suppressed?: { delete: (wordIndex: number) => void } };
   } | null;
 };
-type Issue = { surah?: number; ayah?: number; word?: number; kind?: string; wordIndex?: number };
+type Issue = { surah?: number; ayah?: number; word?: number; kind?: string; wordIndex?: number; source?: string };
+type Verdict = { surah: number; ayah: number; word: number; state: string; distance: number; heardRatio: number; margin: number };
 type ProgressMsg = {
   type: string;
   surah?: number;
@@ -125,6 +127,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   let wake: WakeLockSentinel | null = null;
   let heard = 0;
   let takeMisses: Miss[] = [];
+  // Ayahs whose words were already checked once the reciter moved on to the next ayah.
+  const ayahChecked = new Set<string>();
   let retryClose = false;
   let audioStop: (() => Promise<void>) | null = null;
   let settlingMic: Promise<void> = Promise.resolve();
@@ -1303,6 +1307,13 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     if (surah === seqS && ayah <= seqA) return true;
     const follows = (surah === seqS && ayah === seqA + 1) || (surah === seqS + 1 && ayah === 1);
+    if (follows && !seqDone && wordList(seqS, seqA).length <= 2) {
+      // One- or two-word ayahs (93:1, 103:1) are often over before the model locks on; reading on proves them.
+      const held = wordList(seqS, seqA).map((_, i) => i);
+      const [hs, ha] = [seqS, seqA];
+      seqDone = true;
+      schedule(hs, ha, held);
+    }
     if (follows && seqDone) {
       seqS = surah;
       seqA = ayah;
@@ -1356,7 +1367,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         return;
       }
       if (phase === "error" && issue?.surah && issue.ayah) {
-        if (noteStrike(issue)) remember(issue);
+        // Look-alike-verse omissions fired on the same words for every clean qari (2:6, 2:38, 93:7);
+        // the word rules and checkFinishedAyah catch real dropped words.
+        const lookAlikeDrop = issue.source === "similar_verse" && issue.kind === "possible_omission";
+        if (!lookAlikeDrop && noteStrike(issue)) remember(issue);
         if (!settling) {
           settling = true;
           try {
@@ -1395,8 +1409,46 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const idxs = new Set<number>(msg.matched_indices ?? []);
     for (let i = 0; i <= upto; i += 1) idxs.add(i);
     if (!idxs.size) return;
+    checkFinishedAyah(surah, ayah);
     if (surah) expectPage();
     schedule(surah, ayah, [...idxs]);
+  }
+
+  // When the reciter starts ayah N+1, judge ayah N's words once more with its whole audio settled.
+  // Tuned on real qari recordings with spliced mistakes (tools/recitation-bench): no extra flags on
+  // clean takes, and it catches dropped endings and dropped or swapped words the live rules miss.
+  function checkFinishedAyah(surah: number, ayah: number): void {
+    const key = `${surah}:${ayah}`;
+    if (retryKey || ayah < 2 || ayahChecked.has(key)) return;
+    ayahChecked.add(key);
+    let all: Verdict[] = [];
+    try {
+      all = session?.zipformer?.verdicts() ?? [];
+    } catch {
+      return;
+    }
+    const v = all.filter((x) => x.surah === surah && x.ayah === ayah - 1).sort((a, b) => a.word - b.word);
+    if (v.length < 3) return;
+    const found: Issue[] = [];
+    const lost = (x: Verdict) => x.state === "skipped" || (x.state === "wrong" && x.distance >= 0.5);
+    let k = v.length;
+    while (k > 0 && lost(v[k - 1])) k -= 1;
+    if (k < v.length && k > 0 && v[k - 1].state !== "skipped") {
+      found.push({ surah, ayah: ayah - 1, word: v[k].word, kind: "possible_omission" });
+    }
+    const fine = (x?: Verdict) => !!x && (x.state === "ok" || x.state === "unsure") && x.distance <= 0.25;
+    for (let i = 1; i < k - 1; i += 1) {
+      const x = v[i];
+      if (!fine(v[i - 1]) || !fine(v[i + 1])) continue;
+      if (x.state === "skipped" && x.heardRatio <= 0.35) found.push({ surah, ayah: ayah - 1, word: x.word, kind: "possible_omission" });
+      else if (x.state === "wrong" && x.distance >= 0.6 && x.margin >= 0.5) {
+        found.push({ surah, ayah: ayah - 1, word: x.word, kind: "possible_substitution" });
+      }
+    }
+    for (const issue of found) {
+      const near = takeMisses.some((m) => m.s === issue.surah && m.a === issue.ayah && Math.abs(m.w - (issue.word ?? -9)) <= 1);
+      if (!near && noteStrike(issue)) remember(issue);
+    }
   }
 
   async function loadBytes(url: string, label: string): Promise<ArrayBuffer> {
@@ -1482,7 +1534,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     session = created;
     if (created.zipformer) {
       await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "pause" });
-      created.zipformer.setSlipHead("high");
+      // The slip head added false vowel flags on clean qari recordings and caught nothing extra.
+      created.zipformer.setSlipHead(false);
       created.zipformer.setMode("correction");
     }
     loadingModel = false;
@@ -1748,6 +1801,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     heard = 0;
     takeMisses = [];
+    ayahChecked.clear();
     root.classList.remove("mic");
     root.classList.add("retry");
     session?.reset();
@@ -1781,6 +1835,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     clearTimers();
     heard = 0;
     takeMisses = [];
+    ayahChecked.clear();
     ayahLock = "";
     lockDirty = false;
     rearm = false;
@@ -2043,6 +2098,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const found = takeMisses.slice();
     heard = 0;
     takeMisses = [];
+    ayahChecked.clear();
     setProgress(null);
     void wake?.release();
     wake = null;

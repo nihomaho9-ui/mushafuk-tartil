@@ -1,0 +1,6 @@
+audio/
+seg/
+res/
+cases.json
+part-*.json
+*.log
