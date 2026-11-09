@@ -283,6 +283,7 @@ body { margin: 0; }
   color: transparent;
   background: transparent;
 }
+.tartil.mic .w.num { color: var(--ink); }
 
 .w.warn { box-shadow: inset 0 -0.08em 0 var(--muted); }
 .tartil.hifz.mic .w,
