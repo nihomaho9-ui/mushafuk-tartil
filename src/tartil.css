@@ -301,6 +301,16 @@
 .tartil.hifz.mic .w.cue {
   box-shadow: inset 0 -0.28em 0 var(--ink);
 }
+.tartil.mic .w.err-miss,
+.tartil.mic .w.err-vowel,
+.tartil.mic .w.err-skip,
+.tartil.mic .w.err-repeat,
+.tartil.hifz.mic .w.err-miss,
+.tartil.hifz.mic .w.err-vowel,
+.tartil.hifz.mic .w.err-skip,
+.tartil.hifz.mic .w.err-repeat {
+  color: var(--ink);
+}
 
 .tartil.mic .w.on,
 .tartil.mic .basmala.on { color: var(--ink); }

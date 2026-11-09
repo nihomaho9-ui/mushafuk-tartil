@@ -390,14 +390,6 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const n = (strikes.get(key) ?? 0) + 1;
     strikes.set(key, n);
     saveStrikes();
-    if (w >= 0) warns.add(`${s}:${a}:${w}`);
-    paintMisses();
-    const hard = sense === "sert" || n >= 2;
-    if (!hard) {
-      const name = AZ[s - 1] ?? String(s);
-      setStatus("Diqqət", `${name} ${a}${w >= 0 ? `, söz ${w + 1}` : ""} — bir daha olarsa yazılacaq.`);
-      return false;
-    }
     warns.delete(`${s}:${a}:${w}`);
     return true;
   }
@@ -509,7 +501,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     sense = name;
     senseBtn.classList.toggle("on", name === "sert");
     senseBtn.setAttribute("aria-label", name === "sert" ? "Həssaslıq: sərt" : "Həssaslıq: normal");
-    session?.zipformer?.setSlipHead(name === "sert" ? "high" : "strict");
+    session?.zipformer?.setSlipHead("high");
     try {
       localStorage.setItem("tartil.sense", name);
     } catch {
@@ -1423,8 +1415,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     session = created;
     if (created.zipformer) {
-      await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "stop" });
-      created.zipformer.setSlipHead(sense === "sert" ? "high" : "strict");
+      await created.zipformer.setStructural({ ayahOrder: true, similarVerse: true, timing: "pause" });
+      created.zipformer.setSlipHead("high");
       created.zipformer.setMode("correction");
     }
     loadingModel = false;
