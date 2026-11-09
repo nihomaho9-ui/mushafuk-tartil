@@ -1511,10 +1511,17 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const onPage = pages[page - 1]?.[0];
     if (!onPage) return;
     const total = words.ayahs[onPage[0] - 1]?.length ?? onPage[1];
-    const key = `${onPage[0]}:${onPage[1]}:${total}`;
+    // Expect this page and the next one only. A window to the end of a long surah made each
+    // pause allocate gigabytes in the recitation checks and froze or crashed the tab.
+    let end = onPage[1];
+    for (const pair of pages[page - 1] ?? []) {
+      if (pair[0] === onPage[0] && pair[1] > end) end = pair[1];
+    }
+    end = Math.min(total, end + 1);
+    const key = `${onPage[0]}:${onPage[1]}:${end}`;
     if (expectedKey === key) return;
     expectedKey = key;
-    session.zipformer.setExpected({ surah: onPage[0], ayah: onPage[1], ayahEnd: total });
+    session.zipformer.setExpected({ surah: onPage[0], ayah: onPage[1], ayahEnd: end });
   }
 
   function retryHit(key: string): boolean {
