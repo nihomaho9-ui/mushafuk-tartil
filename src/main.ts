@@ -86,6 +86,7 @@ for (const item of STARTS.split(",")) {
   }
 }
 const loadedFonts = new Set<number>();
+const fontLoads = new Map<number, Promise<void>>();
 let namesReady: Promise<void> | null = null;
 
 function asset(path: string): string {
@@ -145,7 +146,9 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         <select class="t-surah" aria-label="Surə"></select>
       </label>
       <button type="button" class="t-missbtn" aria-expanded="false" aria-label="Xətalar">0</button>
-      <button type="button" class="t-theme" aria-label="Rəng: krem"></button>
+      <button type="button" class="t-theme" aria-label="Səhifə rəngi: krem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5c3 3.6 5.5 6.6 5.5 9.6a5.5 5.5 0 0 1-11 0c0-3 2.5-6 5.5-9.6z"/></svg>
+      </button>
       <button type="button" class="t-more" aria-expanded="false" aria-label="Alətlər">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
@@ -439,7 +442,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     root.classList.toggle("theme-white", name === "white");
     root.classList.toggle("theme-black", name === "black");
     const label = name === "white" ? "ağ" : name === "black" ? "qara" : "krem";
-    themeBtn.setAttribute("aria-label", `Rəng: ${label}`);
+    themeBtn.setAttribute("aria-label", `Səhifə rəngi: ${label}`);
+    themeBtn.title = `Səhifə rəngi: ${label}`;
     try {
       localStorage.setItem("tartil.theme", name);
     } catch {
@@ -815,12 +819,20 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     return namesReady;
   }
 
-  async function loadPageFont(n: number): Promise<void> {
-    if (loadedFonts.has(n)) return;
+  function loadPageFont(n: number): Promise<void> {
+    if (loadedFonts.has(n)) return Promise.resolve();
+    const pending = fontLoads.get(n);
+    if (pending) return pending;
     const face = new FontFace(`QCF${n}`, `url(${QCF}p${n}.woff2)`);
-    await face.load();
-    document.fonts.add(face);
-    loadedFonts.add(n);
+    const job = face
+      .load()
+      .then(() => {
+        document.fonts.add(face);
+        loadedFonts.add(n);
+      })
+      .finally(() => fontLoads.delete(n));
+    fontLoads.set(n, job);
+    return job;
   }
 
   function textWidth(line: HTMLElement): number {
@@ -1031,6 +1043,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     const ahead = n + 1;
     if (ahead <= 604) void loadPageFont(ahead).catch(() => undefined);
+    if (n > 1) void loadPageFont(n - 1).catch(() => undefined);
     prefetchPage(n);
   }
 
@@ -1054,8 +1067,40 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
         if (el.classList.contains("fresh") !== fresh) el.classList.toggle("fresh", fresh);
       });
       paintCue();
+      followLine();
     });
   }
+
+  // Landscape scrolls: keep the line being recited in view, but give way to the reader's own scrolling.
+  let userScrollAt = 0;
+  const markUserScroll = (): void => {
+    userScrollAt = Date.now();
+  };
+  const onScrollKey = (ev: KeyboardEvent): void => {
+    if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(ev.key)) markUserScroll();
+  };
+  window.addEventListener("wheel", markUserScroll, { passive: true });
+  window.addEventListener("touchmove", markUserScroll, { passive: true });
+  window.addEventListener("keydown", onScrollKey);
+  function followLine(): void {
+    if (!micOn || !root.classList.contains("land")) return;
+    if (Date.now() - userScrollAt < 4000) return;
+    const target =
+      sheet.querySelector<HTMLElement>(".w.cue") ||
+      sheet.querySelector<HTMLElement>(".w.fresh") ||
+      [...sheet.querySelectorAll<HTMLElement>(".w.on")].pop();
+    const line = target?.closest<HTMLElement>(".line");
+    if (!line) return;
+    const head = root.querySelector<HTMLElement>(".t-top")?.getBoundingClientRect().bottom ?? 0;
+    const foot = root.querySelector<HTMLElement>(".t-bar")?.getBoundingClientRect().top ?? window.innerHeight;
+    const view = foot - head;
+    const r = line.getBoundingClientRect();
+    if (r.top >= head && r.bottom <= head + view * 0.8) return;
+    const top = Math.max(0, window.scrollY + r.top - head - view * 0.2);
+    if (Math.abs(top - window.scrollY) < 2) return;
+    window.scrollTo({ top, behavior: "smooth" });
+  }
+  const followTimer = window.setInterval(followLine, 700);
 
   function paintCue(): void {
     sheet.querySelectorAll(".cue").forEach((el) => el.classList.remove("cue"));
@@ -2156,6 +2201,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     alive = false;
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("hashchange", onHash);
+    window.removeEventListener("wheel", markUserScroll);
+    window.removeEventListener("touchmove", markUserScroll);
+    window.removeEventListener("keydown", onScrollKey);
+    window.clearInterval(followTimer);
     window.removeEventListener("resize", onResize);
     barWatch?.disconnect();
     document.removeEventListener("visibilitychange", onVisible);

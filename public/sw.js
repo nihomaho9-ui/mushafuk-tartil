@@ -1,4 +1,4 @@
-const SHELL = "tartil-shell-v4";
+const SHELL = "tartil-shell-v5";
 const FONTS = "https://mushafuk.online/yazi-fonts/";
 
 self.addEventListener("install", (event) => {
