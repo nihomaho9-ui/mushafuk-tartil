@@ -1511,7 +1511,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     const onPage = pages[page - 1]?.[0];
     if (!onPage) return;
     const total = words.ayahs[onPage[0] - 1]?.length ?? onPage[1];
-    // Expect this page and the next one only. A window to the end of a long surah made each
+    // Expect this page plus the next ayah, which still turns the page. A window to the end of a long surah made each
     // pause allocate gigabytes in the recitation checks and froze or crashed the tab.
     let end = onPage[1];
     for (const pair of pages[page - 1] ?? []) {
