@@ -824,7 +824,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
 
   function fit(): void {
     pageEl.querySelectorAll<HTMLElement>(".line").forEach((line) => line.style.removeProperty("--g"));
-    const h = Math.max(160, pageEl.clientHeight - 108);
+    const bar = root.querySelector<HTMLElement>(".t-bar");
+    const barH = bar ? Math.ceil(bar.getBoundingClientRect().height) : 0;
+    root.style.setProperty("--t-bar-h", `${barH}px`);
+    const h = Math.max(160, pageEl.clientHeight - barH - 21);
     const w = pageEl.clientWidth - 12;
     if (!h || !w) return;
     let size = h / 15;
@@ -838,7 +841,8 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       size *= (w / widest) * 0.94;
     }
     const phone = matchMedia("(max-width: 520px)").matches;
-    pageEl.style.fontSize = `${size * (phone ? 1 : 0.92)}px`;
+    const rowH = (pageEl.clientHeight - barH) / 15;
+    pageEl.style.fontSize = `${Math.min(size * (phone ? 1 : 0.92), rowH * 0.62)}px`;
     pageEl.style.overflowY = "hidden";
     let ink = 0;
     pageEl.querySelectorAll<HTMLElement>(".line:not(.surah):not(.basmala)").forEach((line) => {
@@ -2104,6 +2108,9 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   setStatus("Oxu", "Mikrofonu açın: ayələr gizlənir, model təsdiqləyəndə açılır.");
   const onResize = () => fit();
   window.addEventListener("resize", onResize);
+  const barWatch = typeof ResizeObserver === "function" ? new ResizeObserver(() => fit()) : null;
+  const barEl = root.querySelector<HTMLElement>(".t-bar");
+  if (barWatch && barEl) barWatch.observe(barEl);
   if ("serviceWorker" in navigator) {
     const sw = asset("sw.js");
     void navigator.serviceWorker.register(sw).catch(() => undefined);
@@ -2113,6 +2120,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     alive = false;
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("resize", onResize);
+    barWatch?.disconnect();
     document.removeEventListener("visibilitychange", onVisible);
     clearTimers();
     void wake?.release();

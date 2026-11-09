@@ -1,3 +1,6 @@
+html,
+body { margin: 0; }
+
 .tartil {
   --paper: #fffaf0;
   --ink: #1a1612;
@@ -156,7 +159,7 @@
   background: var(--paper);
   color: var(--ink);
   border: 0;
-  padding: 0 4px;
+  padding: 0 4px var(--t-bar-h, calc(88px + env(safe-area-inset-bottom)));
   display: flex;
   flex-direction: column;
   overflow: hidden;
