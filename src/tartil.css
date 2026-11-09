@@ -365,6 +365,8 @@ body { margin: 0; }
 .t-status { min-width: 0; flex: 1; }
 .t-status b { display: block; font-size: 15px; }
 .t-status span { display: block; color: var(--muted); font-size: 13px; line-height: 1.35; }
+.t-status b,
+.t-status span { unicode-bidi: plaintext; text-align: right; }
 
 .t-foot { display: none; }
 .t-foot a { color: #6e5424; }
@@ -386,3 +388,18 @@ body { margin: 0; }
 }
 .t-level i { background: #1c7a4a; }
 
+
+/* Phone in landscape: readable text across the full width, the page scrolls. */
+.tartil.land { height: auto; min-height: 100dvh; overflow: visible; }
+.tartil.land .t-page { flex: none; overflow: visible; justify-content: flex-start; }
+.tartil.land .t-page .line,
+.tartil.land .t-page.mid .line { flex: none; height: var(--t-row, 3em); }
+.tartil.land .t-page .line.stack { height: calc(var(--t-row, 3em) * 1.7); }
+.tartil.land .t-bar { gap: 10px; padding: 4px 12px calc(4px + env(safe-area-inset-bottom)); }
+.tartil.land .t-mic { width: 40px; height: 40px; }
+.tartil.land .t-mic svg { width: 20px; height: 20px; }
+.tartil.land .t-status { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; }
+.tartil.land .t-status b { font-size: 14px; flex: none; }
+.tartil.land .t-status .t-sub { flex: 1 1 0; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tartil.land .t-load,
+.tartil.land .t-level { flex: 1 0 100%; margin-top: 3px; }

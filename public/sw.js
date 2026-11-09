@@ -1,4 +1,5 @@
-const SHELL = "tartil-shell-v3";
+const SHELL = "tartil-shell-v4";
+const FONTS = "https://mushafuk.online/yazi-fonts/";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -14,7 +15,9 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
+  if (event.request.method !== "GET") return;
+  const font = url.href.startsWith(FONTS);
+  if (url.origin !== self.location.origin && !font) return;
   if (url.pathname.endsWith("/model.onnx")) return;
   event.respondWith(
     fetch(event.request)
@@ -25,6 +28,17 @@ self.addEventListener("fetch", (event) => {
         }
         return res;
       })
-      .catch(async () => (await caches.match(event.request)) || (await caches.match(new URL("./index.html", self.registration.scope)))),
+      .catch(async () => {
+        const hit = (await caches.match(event.request)) || (await caches.match(event.request, { ignoreSearch: true }));
+        if (hit) return hit;
+        if (event.request.mode === "navigate") {
+          return (
+            (await caches.match(new URL("./", self.registration.scope))) ||
+            (await caches.match(new URL("./index.html", self.registration.scope))) ||
+            Response.error()
+          );
+        }
+        return Response.error();
+      }),
   );
 });

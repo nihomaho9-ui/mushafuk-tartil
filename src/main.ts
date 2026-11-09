@@ -92,6 +92,8 @@ function asset(path: string): string {
   return BASE + path.replace(/^\//, "");
 }
 
+const LANDSCAPE_PHONE = "(orientation: landscape) and (max-height: 520px)";
+
 function clampPage(n: number): number {
   if (!Number.isFinite(n)) return 1;
   return Math.min(604, Math.max(1, Math.round(n)));
@@ -100,10 +102,15 @@ function clampPage(n: number): number {
 export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () => void {
   const hashMode = opts?.hash === true;
   let words: WordsFile | null = wordsData as WordsFile;
-  let pages: number[][][] = (pagesData as PagesFile).pages;
+  // Ayahs per page follow the drawn Madinah layout so recitation, jumps and lessons match what is on screen.
+  let pages: number[][][] = Array.from({ length: 604 }, (_, i) =>
+    (qcfAyahs[String(i + 1)] ?? []).map(([key]) => key.split(":").map(Number)),
+  );
+  if (!pages.some((list) => list.length)) pages = (pagesData as PagesFile).pages;
   const pageOf = new Map<string, number>();
   const surahPage = new Map<number, number>();
   let page = 1;
+  let pickedSurah = 0;
   let alive = true;
   let micOn = false;
   let loadingModel = false;
@@ -824,13 +831,16 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
 
   function fit(): void {
     pageEl.querySelectorAll<HTMLElement>(".line").forEach((line) => line.style.removeProperty("--g"));
+    const land = matchMedia(LANDSCAPE_PHONE).matches;
+    root.classList.toggle("land", land);
+    if (!land) root.style.removeProperty("--t-row");
     const bar = root.querySelector<HTMLElement>(".t-bar");
     const barH = bar ? Math.ceil(bar.getBoundingClientRect().height) : 0;
     root.style.setProperty("--t-bar-h", `${barH}px`);
     const h = Math.max(160, pageEl.clientHeight - barH - 21);
     const w = pageEl.clientWidth - 12;
     if (!h || !w) return;
-    let size = h / 15;
+    let size = land ? w / 12 : h / 15;
     for (let i = 0; i < 3; i += 1) {
       pageEl.style.fontSize = `${size}px`;
       let widest = 0;
@@ -842,7 +852,10 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     }
     const phone = matchMedia("(max-width: 520px)").matches;
     const rowH = (pageEl.clientHeight - barH) / 15;
-    pageEl.style.fontSize = `${Math.min(size * (phone ? 1 : 0.92), rowH * 0.62)}px`;
+    if (land) {
+      pageEl.style.fontSize = `${size}px`;
+      root.style.setProperty("--t-row", `${(size / 0.62).toFixed(2)}px`);
+    } else pageEl.style.fontSize = `${Math.min(size * (phone ? 1 : 0.92), rowH * 0.62)}px`;
     pageEl.style.overflowY = "hidden";
     let ink = 0;
     pageEl.querySelectorAll<HTMLElement>(".line:not(.surah):not(.basmala)").forEach((line) => {
@@ -997,14 +1010,18 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       /* draw anyway; the next page load retries */
     }
     if (!alive || id !== paint) return;
+    const turned = pageInput.value !== String(n);
     draw(n);
     fit();
+    if (turned && root.classList.contains("land")) window.scrollTo(0, 0);
     if (micOn || retryKey) applyShown();
     if (retryKey) markRetry();
     paintMisses();
     pageInput.value = String(n);
     const first = pages[n - 1]?.[0];
-    if (first) surahSel.value = String(first[0]);
+    const keepPick = pickedSurah > 0 && surahPage.get(pickedSurah) === n;
+    pickedSurah = 0;
+    if (!keepPick && first) surahSel.value = String(first[0]);
     if (hashMode) history.replaceState(null, "", `#${n}`);
     showBack();
     try {
@@ -2027,11 +2044,21 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
       go(page + dir);
     });
   });
-  pageInput.addEventListener("change", () => go(Number(pageInput.value)));
+  pageInput.addEventListener("change", () => {
+    const n = Number(pageInput.value.trim());
+    if (!pageInput.value.trim() || !Number.isFinite(n)) {
+      pageInput.value = String(page);
+      return;
+    }
+    go(n);
+  });
   surahSel.addEventListener("change", () => {
     const n = Number(surahSel.value);
     const target = surahPage.get(n);
-    if (target) go(target);
+    if (target) {
+      pickedSurah = n;
+      go(target);
+    }
   });
 
   let sx = 0;
@@ -2052,6 +2079,15 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   }, { passive: true });
 
   window.addEventListener("keydown", onKey);
+  function onHash(): void {
+    if (!hashMode) return;
+    const n = Number((location.hash || "").replace("#", ""));
+    if (n && Number.isFinite(n)) {
+      if (clampPage(n) !== page) go(n);
+      else if (location.hash !== `#${page}`) history.replaceState(null, "", `#${page}`);
+    } else history.replaceState(null, "", `#${page}`);
+  }
+  window.addEventListener("hashchange", onHash);
   function onKey(ev: KeyboardEvent): void {
     if (ev.key === "ArrowLeft") go(page + 1);
     if (ev.key === "ArrowRight") go(page - 1);
@@ -2119,6 +2155,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
   return () => {
     alive = false;
     window.removeEventListener("keydown", onKey);
+    window.removeEventListener("hashchange", onHash);
     window.removeEventListener("resize", onResize);
     barWatch?.disconnect();
     document.removeEventListener("visibilitychange", onVisible);
