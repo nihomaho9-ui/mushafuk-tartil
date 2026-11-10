@@ -1410,7 +1410,7 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     for (let i = 0; i <= upto; i += 1) idxs.add(i);
     if (!idxs.size) return;
     checkFinishedAyah(surah, ayah);
-    if (surah) expectPage();
+    if (surah) expectPage({ surah, ayah });
     schedule(surah, ayah, [...idxs]);
   }
 
@@ -1558,23 +1558,52 @@ export function mountTartil(root: HTMLElement, opts?: { hash?: boolean }): () =>
     return out;
   }
 
+  // The skip / look-alike checks align everything heard since their block start against the expected passage, and
+  // setExpected keeps that block. At a surah change on the page the old surah's audio would be judged against the new
+  // surah (113:1 and 114:1 open alike: clean 114 got a false substitution and two skipped ayahs), so start a new block
+  // there, as the session itself does every 120 s.
+  function newStructuralBlock(z: unknown): void {
+    const st = (z as { st?: { tokens?: unknown[]; samples?: number; blockTok?: number; blockT0?: number } }).st;
+    if (!st || !Array.isArray(st.tokens) || typeof st.samples !== "number") return;
+    st.blockTok = st.tokens.length;
+    st.blockT0 = st.samples / 16000;
+  }
+
   let expectedKey = "";
-  function expectPage(): void {
+  // A page can hold the end of one surah and the start of the next (e.g. page 580: 76:26-31, 77:1-19). The engine's
+  // expected passage is one surah and it never relocates out of it, so expect the surah segment the reciter is in and
+  // move on to the page's next segment once they reach the current segment's last ayah. The engine skips the basmala
+  // before the next surah's first word when it locks.
+  function expectPage(at?: { surah: number; ayah: number }): void {
     if (retryKey || !session?.zipformer || !words) return;
-    const onPage = pages[page - 1]?.[0];
-    if (!onPage) return;
-    const total = words.ayahs[onPage[0] - 1]?.length ?? onPage[1];
-    // Expect this page plus the next ayah, which still turns the page. A window to the end of a long surah made each
-    // pause allocate gigabytes in the recitation checks and froze or crashed the tab.
-    let end = onPage[1];
-    for (const pair of pages[page - 1] ?? []) {
-      if (pair[0] === onPage[0] && pair[1] > end) end = pair[1];
+    const list = pages[page - 1] ?? [];
+    if (!list.length) return;
+    const segs: { surah: number; first: number; last: number }[] = [];
+    for (const [s, a] of list) {
+      const seg = segs[segs.length - 1];
+      if (seg && seg.surah === s) seg.last = Math.max(seg.last, a);
+      else segs.push({ surah: s, first: a, last: a });
     }
-    end = Math.min(total, end + 1);
-    const key = `${onPage[0]}:${onPage[1]}:${end}`;
+    let k = 0;
+    if (at) {
+      const i = segs.findIndex((x) => x.surah === at.surah);
+      if (i >= 0) k = at.ayah >= segs[i].last && i + 1 < segs.length ? i + 1 : i;
+    } else if (expectedKey) {
+      // Keep the segment already expected on this page (another call without a position must not rewind it).
+      const i = segs.findIndex((x) => expectedKey.startsWith(`${x.surah}:${x.first}:`));
+      if (i >= 0) k = i;
+    }
+    const seg = segs[k];
+    const total = words.ayahs[seg.surah - 1]?.length ?? seg.last;
+    // Expect this segment plus the next ayah, which still turns the page. A window to the end of a long surah made each
+    // pause allocate gigabytes in the recitation checks and froze or crashed the tab.
+    const end = Math.min(total, seg.last + 1);
+    const key = `${seg.surah}:${seg.first}:${end}`;
     if (expectedKey === key) return;
+    const crossing = Boolean(at) && expectedKey !== "" && !expectedKey.startsWith(`${seg.surah}:`);
     expectedKey = key;
-    session.zipformer.setExpected({ surah: onPage[0], ayah: onPage[1], ayahEnd: end });
+    session.zipformer.setExpected({ surah: seg.surah, ayah: seg.first, ayahEnd: end });
+    if (crossing) newStructuralBlock(session.zipformer);
   }
 
   function retryHit(key: string): boolean {
